@@ -1,0 +1,53 @@
+{
+  "name": "chromia-erp-standalone",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "cross-env TZ=UTC next dev",
+    "build": "prisma generate && cross-env TZ=UTC next build",
+    "start": "cross-env TZ=UTC next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && npm run test:node",
+    "test:chromia": "vitest run",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:reset": "prisma migrate reset",
+    "db:seed": "cross-env TZ=UTC tsx --env-file=.env prisma/seed-chromia.ts && cross-env TZ=UTC tsx --env-file=.env prisma/seed-attendance.ts",
+    "db:seed:chromia": "cross-env TZ=UTC tsx --env-file=.env prisma/seed-chromia.ts",
+    "db:seed:attendance": "cross-env TZ=UTC tsx --env-file=.env prisma/seed-attendance.ts",
+    "db:studio": "prisma studio",
+    "test:node": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/*.test.ts"
+  },
+  "prisma": {
+    "seed": "npm run db:seed"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1",
+    "clsx": "^2.1.1",
+    "next": "^15.1.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.3.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "xlsx-js-style": "^1.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "cross-env": "^7.0.3",
+    "postcss": "^8.4.49",
+    "prisma": "^6.2.1",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
+  }
+}
