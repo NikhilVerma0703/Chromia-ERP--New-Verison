@@ -139,6 +139,7 @@ export async function sendFromStockAction(
   revalidatePath(APP_ROUTES.dashboard);
   revalidatePath(APP_ROUTES.reports);
   revalidatePath(APP_ROUTES.operator);
+  revalidatePath(APP_ROUTES.dispatch);
 
   return { releasedSlabNo: slabNo, releasedAt: Date.now() };
 }

@@ -85,7 +85,7 @@ export const CHROMIA_ITEMS: NavItem[] = [
   // Dispatch was in the module's own list (navigation.ts) and missing here, so
   // the slabs QC marked for dispatch had no way in but the tablet swipe.
   // tests/chromiaNavParity.test.ts now holds the two lists together.
-  { href: "/chromia/dispatch",               icon: I.packaging, label: "Dispatch" },
+  { href: "/chromia/dispatch",               icon: I.packaging, label: "Dispatched" },
   { href: "/chromia/recalibrations",         icon: I.spanner,  label: "Recalibration" },
   { href: "/chromia/recalibration-tracking", icon: I.live,     label: "Recal. Tracking" },
   { href: "/chromia/reports",                icon: I.ceo,      label: "Summary" },

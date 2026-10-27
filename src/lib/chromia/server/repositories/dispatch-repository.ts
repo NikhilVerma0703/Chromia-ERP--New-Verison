@@ -1,74 +1,89 @@
-import { ChromiaDisposition as Disposition, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
-import { simpleSlabWhere, type SimpleFilters } from '@/lib/chromia/simple-filters';
+import {
+  addMonths,
+  dispatchDateWhere,
+  dispatchedSlabWhere,
+  monthDays,
+  type DispatchedFilters,
+} from '@/lib/chromia/dispatched-filters';
+import { plantDayRange, toPlantDateInput } from '@/lib/chromia/plant-time';
 
 /**
- * Dispatch data access.
+ * Dispatched — data access (27 Oct 2026).
  *
- * Two questions, kept apart the way the Stockyard keeps its racks and its
- * release log apart:
+ * The page is a read-only record of every slab that has left the plant by
+ * dispatch: sent from the Stockyard with the Dispatch outcome, and the older
+ * ones dispatched straight from QC or brought in by a register import (the
+ * owner's choice). Each has a chromia_dispatch row whose dispatch_date is the
+ * date chosen when it was sent — the Dispatch Date shown and filtered on,
+ * never the production date or the day it was stocked.
  *
- *   • what QC has decided to dispatch but nobody has actually sent yet — a slab
- *     whose outcome is Dispatch and whose status is still GRADED (decided, not
- *     gone); and
- *   • what has actually been dispatched straight from the line — a real dispatch
- *     record with no closed stock holding behind it. A slab that was stocked and
- *     then dispatched belongs to the Stockyard's own release log, not here, so
- *     the two pages never show the same departure twice.
+ * ONE SLAB, ONE ROW, ONE COUNT. Every figure and the table read the same
+ * dispatches through the same condition and keep each slab's latest dispatch
+ * (DISTINCT ON the slab), so a slab is counted exactly once and, with no filter
+ * set, Total Dispatched Slabs is the table's row count.
  */
 
-/** Slabs QC marked for dispatch that are still waiting to be sent. */
-export async function listAwaitingDispatch(filters?: SimpleFilters) {
-  const slabs = await prisma.chromiaSlab.findMany({
-    where: {
-      deletedAt: null,
-      status: SlabStatus.GRADED,
-      currentDisposition: Disposition.DISPATCH,
-      ...(filters ? simpleSlabWhere(filters) : {}),
-    },
-    orderBy: [{ receivedDate: 'asc' }, { createdAt: 'asc' }],
-    select: {
-      id: true,
-      slabNo: true,
-      receivedDate: true,
-      currentThicknessMm: true,
-      currentGrade: true,
-      batch: { select: { batchNo: true } },
-      baseMaterial: { select: { name: true } },
-      plannedDesign: { select: { name: true, fileName: true } },
-    },
-  });
+/** A dispatch of a slab that still exists — the only kind this page counts. */
+const LIVE = { slab: { deletedAt: null } } as const;
 
-  return slabs.map(({ currentThicknessMm, ...slab }) => ({
-    ...slab,
-    thicknessCm: currentThicknessMm === null ? null : Number(currentThicknessMm) / 10,
-  }));
+/** How many distinct slabs have a dispatch matching `where`. */
+async function countDispatchedSlabs(where: Record<string, unknown>): Promise<number> {
+  const slabs = await prisma.chromiaDispatch.findMany({
+    where: { ...LIVE, ...where },
+    distinct: ['slabId'],
+    select: { slabId: true },
+  });
+  return slabs.length;
+}
+
+export interface DispatchedKpis {
+  total: number;
+  currentMonth: number;
+  previousMonth: number;
 }
 
 /**
- * Slabs actually dispatched straight from the line (not via stock).
- *
- * Mirrors the Stockyard's release log exactly, but for the other kind of
- * departure: a dispatch whose slab has NO closed stock holding.
+ * The Dashboard, by DISPATCH date on the plant calendar: all to date, the
+ * current calendar month so far, and the whole previous calendar month.
+ * Never filtered.
  */
-export async function listDirectDispatches(take = 50) {
+export async function dispatchedKpis(now: Date = new Date()): Promise<DispatchedKpis> {
+  const thisMonth = toPlantDateInput(now).slice(0, 7);
+  const inMonth = (month: string) => {
+    const { fromDay, toDay } = monthDays(month);
+    const { from, to } = plantDayRange(fromDay, toDay);
+    return { dispatchDate: { gte: from, lte: to } };
+  };
+  const [total, currentMonth, previousMonth] = await Promise.all([
+    countDispatchedSlabs({}),
+    countDispatchedSlabs(inMonth(thisMonth)),
+    countDispatchedSlabs(inMonth(addMonths(thisMonth, -1))),
+  ]);
+  return { total, currentMonth, previousMonth };
+}
+
+/** Dispatched slabs, newest dispatch first, narrowed by any of the filters. */
+export async function listDispatchedSlabs(filters: DispatchedFilters, now: Date = new Date()) {
   const dispatches = await prisma.chromiaDispatch.findMany({
     where: {
-      slab: { deletedAt: null, stockEntries: { none: { releasedAt: { not: null } } } },
+      slab: { deletedAt: null, ...dispatchedSlabWhere(filters) },
+      ...dispatchDateWhere(filters, now),
     },
-    orderBy: [{ dispatchDate: 'desc' }, { createdAt: 'desc' }],
-    take,
+    distinct: ['slabId'],
+    orderBy: [{ slabId: 'asc' }, { dispatchDate: 'desc' }, { createdAt: 'desc' }],
     select: {
       id: true,
       dispatchDate: true,
-      createdAt: true,
       slab: {
         select: {
           id: true,
           slabNo: true,
           receivedDate: true,
-          currentGrade: true,
           currentThicknessMm: true,
+          currentGrade: true,
+          currentDisposition: true,
+          remarks: true,
           batch: { select: { batchNo: true } },
           baseMaterial: { select: { name: true } },
           plannedDesign: { select: { name: true, fileName: true } },
@@ -77,20 +92,53 @@ export async function listDirectDispatches(take = 50) {
     },
   });
 
-  return dispatches.map((dispatch) => ({
-    id: dispatch.id,
-    dispatchDate: dispatch.dispatchDate,
-    slabId: dispatch.slab.id,
-    slabNo: dispatch.slab.slabNo,
-    receivedDate: dispatch.slab.receivedDate,
-    batchNo: dispatch.slab.batch.batchNo,
-    baseMaterial: dispatch.slab.baseMaterial.name,
-    designFileName:
-      dispatch.slab.plannedDesign?.fileName ?? dispatch.slab.plannedDesign?.name ?? null,
-    thicknessCm:
-      dispatch.slab.currentThicknessMm === null
-        ? null
-        : Number(dispatch.slab.currentThicknessMm) / 10,
-    grade: dispatch.slab.currentGrade,
-  }));
+  return dispatches
+    .map((dispatch) => ({
+      id: dispatch.id,
+      dispatchDate: dispatch.dispatchDate,
+      slabId: dispatch.slab.id,
+      slabNo: dispatch.slab.slabNo,
+      receivedDate: dispatch.slab.receivedDate,
+      batchNo: dispatch.slab.batch.batchNo,
+      baseMaterial: dispatch.slab.baseMaterial.name,
+      designFileName: dispatch.slab.plannedDesign?.fileName ?? dispatch.slab.plannedDesign?.name ?? null,
+      thicknessCm:
+        dispatch.slab.currentThicknessMm === null ? null : Number(dispatch.slab.currentThicknessMm) / 10,
+      grade: dispatch.slab.currentGrade,
+      disposition: dispatch.slab.currentDisposition,
+      remarks: dispatch.slab.remarks,
+    }))
+    .sort(
+      (a, b) =>
+        b.dispatchDate.getTime() - a.dispatchDate.getTime() ||
+        b.receivedDate.getTime() - a.receivedDate.getTime() ||
+        a.slabNo.localeCompare(b.slabNo, undefined, { numeric: true }),
+    );
+}
+
+export interface DispatchedFilterOptions {
+  batchNos: string[];
+  baseMaterials: string[];
+  fileNames: string[];
+}
+
+/** What the searchable dropdowns offer: the values of slabs that have been dispatched. */
+export async function dispatchedFilterOptions(): Promise<DispatchedFilterOptions> {
+  const slabs = await prisma.chromiaSlab.findMany({
+    where: { deletedAt: null, dispatches: { some: {} } },
+    select: {
+      batch: { select: { batchNo: true } },
+      baseMaterial: { select: { name: true } },
+      plannedDesign: { select: { name: true, fileName: true } },
+    },
+  });
+  const sorted = (values: (string | null | undefined)[]) =>
+    [...new Set(values.filter((v): v is string => Boolean(v && v.trim())))].sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+  return {
+    batchNos: sorted(slabs.map((s) => s.batch.batchNo)),
+    baseMaterials: sorted(slabs.map((s) => s.baseMaterial.name)),
+    fileNames: sorted(slabs.map((s) => s.plannedDesign?.fileName ?? s.plannedDesign?.name)),
+  };
 }

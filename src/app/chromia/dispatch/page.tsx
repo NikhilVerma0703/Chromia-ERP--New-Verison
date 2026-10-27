@@ -1,164 +1,144 @@
 import type { Metadata } from 'next';
 
-import { EmptyState, PageHeader } from '@/components/chromia/ui';
-import { SimpleFilterBar } from '@/components/chromia/filter-bar-simple';
+import { EmptyState, PageHeader, Stat } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { GradeBadge } from '@/components/chromia/ui/status';
-import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import {
-  hasSimpleFilters,
-  parseSimpleFilters,
-  type RawSearchParams,
-} from '@/lib/chromia/simple-filters';
+  buildDispatchedQuery,
+  dispatchMonthOptions,
+  hasDispatchedFilters,
+  monthLabel,
+  parseDispatchedFilters,
+} from '@/lib/chromia/dispatched-filters';
+import { PLANT_TIME_ZONE, toPlantDateInput } from '@/lib/chromia/plant-time';
+import type { RawSearchParams } from '@/lib/chromia/simple-filters';
+import { manualRemark } from '@/lib/chromia/slab-remarks';
 import {
-  listAwaitingDispatch,
-  listDirectDispatches,
+  dispatchedFilterOptions,
+  dispatchedKpis,
+  listDispatchedSlabs,
 } from '@/lib/chromia/server/repositories/dispatch-repository';
-import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { requirePageUser } from '@/lib/pageUser';
 
-import { SendForDispatchForm } from './send-form';
+import { DispatchedFindASlab } from './find-a-slab';
 
-export const metadata: Metadata = { title: 'Dispatch' };
+export const metadata: Metadata = { title: 'Dispatched' };
 export const dynamic = 'force-dynamic';
 
 const dateFmt = new Intl.DateTimeFormat('en-GB', {
   day: '2-digit',
   month: 'short',
-  year: 'numeric',
-  timeZone: PLANT_TIME_ZONE,
-});
+  year: 'numeric', timeZone: PLANT_TIME_ZONE, });
 
 const { th, td, tdMuted, tdNum } = dataTable;
 
 /**
- * Dispatch.
+ * Dispatched (was Dispatch; renamed 27 Oct 2026).
  *
- * QC decides a Grade A slab will be dispatched, but the slab is usually sent
- * out weeks or months later — sometimes the same day, but rarely at the QC
- * bench. This page holds that gap: the queue on top is every slab QC marked for
- * dispatch that has not actually gone yet, with no dispatch date until it does;
- * the log underneath is what has really been sent. Recording the send here runs
- * the same dispatch logic as everywhere else, so nothing about traceability
- * changes — only *when* the date is captured.
+ * A record of every slab that has left the plant by dispatch — read-only:
+ * nothing here edits, deletes or dispatches. Slabs are dispatched from the
+ * Stockyard (Stock Outcome → Dispatch); the old Awaiting dispatch queue went
+ * into the Stockyard with migration 0005.
+ *
+ * THREE SECTIONS, IN THIS ORDER:
+ *
+ *   Dashboard        Total Dispatched Slabs, Current Month and Previous Month,
+ *                    by DISPATCH date on the plant calendar — never filtered;
+ *   Find a Slab      Dispatch Date and Dispatch Date Range, Batch, Material and
+ *                    Design, alone or together (lib/chromia/dispatched-filters);
+ *   Dispatched Slabs every dispatched slab, newest dispatch first — all of them
+ *                    until a filter narrows it, so its count with no filter is
+ *                    Total Dispatched Slabs (dispatch-repository counts both).
+ *
+ * Dispatch Date is the dispatch record's own date: the one chosen when the
+ * slab was sent. The Production Date beside it is the slab's, unchanged.
  */
-export default async function DispatchPage({
+export default async function DispatchedPage({
   searchParams,
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  // Signed in, or no further, on every visit: the module layout's gate is
-  // not run again when the browser moves between this module's pages
-  // (requirePageUser in lib/pageUser.ts says why).
   await requirePageUser();
-  const filters = parseSimpleFilters(await searchParams);
-  const filtered = hasSimpleFilters(filters);
+  const filters = parseDispatchedFilters(await searchParams);
+  const filtered = hasDispatchedFilters(filters);
+  const now = new Date();
 
-  // Filters narrow the queue; the sent log below is history and stays whole,
-  // the same way the Stockyard filters its racks and not its release log.
-  const [awaiting, dispatched] = await Promise.all([
-    listAwaitingDispatch(filtered ? filters : undefined),
-    listDirectDispatches(),
+  const [kpis, options, slabs] = await Promise.all([
+    dispatchedKpis(now),
+    dispatchedFilterOptions(),
+    listDispatchedSlabs(filters, now),
   ]);
+
+  const thisMonth = toPlantDateInput(now).slice(0, 7);
+  const months = dispatchMonthOptions(now);
 
   return (
     <>
       <PageHeader
-        title="Dispatch"
-        description={
-          awaiting.length === 0
-            ? filtered
-              ? 'No slabs awaiting dispatch match these filters.'
-              : 'No slabs are waiting to be dispatched.'
-            : `${awaiting.length} slab${awaiting.length === 1 ? '' : 's'} awaiting dispatch${
-                filtered ? ' matching' : ''
-              }`
-        }
+        title="Dispatched"
+        description={`${kpis.total} ${kpis.total === 1 ? 'slab' : 'slabs'} dispatched to date`}
       />
 
-      <SimpleFilterBar filters={filters} action={APP_ROUTES.dispatch} />
-
-      {/* --------------------------------------------------- awaiting queue --- */}
+      {/* ------------------------------------------------------ Dashboard --- */}
       <div className="mb-6">
-        <SectionCard
-          title="Awaiting dispatch"
-          accent="active"
-          padded={awaiting.length === 0}
-          actions={
-            <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
-              <span className="text-foreground font-semibold tabular-nums">{awaiting.length}</span>{' '}
-              {awaiting.length === 1 ? 'slab' : 'slabs'}
-            </span>
-          }
-        >
-          {awaiting.length === 0 ? (
-            <EmptyState>
-              {filtered
-                ? 'No slab awaiting dispatch matches these filters.'
-                : 'Nothing is waiting to be dispatched. Grade a slab A → Dispatch and it appears here.'}
-            </EmptyState>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className={dataTable.root}>
-                <thead className={dataTable.head}>
-                  <tr>
-                    <th className={th}>Dispatch Date</th>
-                    <th className={th}>Production Date</th>
-                    <th className={th}>Batch No.</th>
-                    <th className={th}>Slab No.</th>
-                    <th className={th}>Base Material / Slab Name</th>
-                    <th className={th}>File Name / Planned Design</th>
-                    <th className={`${th} text-right`}>Thickness (cm)</th>
-                    <th className={th}>Grade</th>
-                    <th className={`${th} text-right`}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {awaiting.map((slab) => (
-                    <tr key={slab.id} className={dataTable.row}>
-                      {/* Empty until it is actually sent — that is the point. */}
-                      <td className={tdMuted}>—</td>
-                      <td className={`${td} font-medium whitespace-nowrap`}>
-                        {dateFmt.format(slab.receivedDate)}
-                      </td>
-                      <td className={`${tdMuted} font-mono`}>{slab.batch.batchNo}</td>
-                      <td className={`${td} font-mono`}>{slab.slabNo}</td>
-                      <td className={td}>{slab.baseMaterial.name}</td>
-                      <td className={tdMuted}>
-                        {slab.plannedDesign?.fileName ?? slab.plannedDesign?.name ?? '—'}
-                      </td>
-                      <td className={`${tdNum} text-right`}>
-                        {slab.thicknessCm === null ? '—' : slab.thicknessCm}
-                      </td>
-                      <td className={td}>
-                        <GradeBadge grade={slab.currentGrade} />
-                      </td>
-                      <td className={`${td} text-right`}>
-                        <SendForDispatchForm slabId={slab.id} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <SectionCard title="Dashboard" accent="brand" padded>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Stat label="Total Dispatched Slabs" value={kpis.total} hint="All dispatched to date" tone="done" />
+            <Stat
+              label="Current Month Dispatched Slabs"
+              value={kpis.currentMonth}
+              hint={monthLabel(thisMonth)}
+              tone="active"
+            />
+            <Stat
+              label="Previous Month Dispatched Slabs"
+              value={kpis.previousMonth}
+              hint={monthLabel(months[1] ?? thisMonth)}
+              tone="neutral"
+            />
+          </div>
         </SectionCard>
       </div>
 
-      {/* ----------------------------------------------------- sent log --- */}
+      {/* ---------------------------------------------------- Find a Slab --- */}
+      <div className="mb-6">
+        <DispatchedFindASlab
+          key={buildDispatchedQuery(filters)}
+          values={{
+            dispatchDate: filters.dispatchDate,
+            range: filters.range ?? '',
+            month: filters.month,
+            from: filters.from,
+            to: filters.to,
+            batchNo: filters.batchNo,
+            baseMaterial: filters.baseMaterial,
+            fileName: filters.fileName,
+          }}
+          options={{
+            ...options,
+            months: months.map((value) => ({ value, label: monthLabel(value) })),
+            today: toPlantDateInput(now),
+          }}
+        />
+      </div>
+
+      {/* ----------------------------------------------- Dispatched Slabs --- */}
       <SectionCard
-        title="Dispatched"
-        accent="brand"
-        padded={dispatched.length === 0}
+        title="Dispatched Slabs"
+        accent="active"
+        padded={slabs.length === 0}
         actions={
           <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
-            <span className="text-foreground font-semibold tabular-nums">{dispatched.length}</span>{' '}
-            {dispatched.length === 1 ? 'record' : 'records'}
+            <span className="text-foreground font-semibold tabular-nums">{slabs.length}</span>{' '}
+            {slabs.length === 1 ? 'slab' : 'slabs'}
+            {filtered ? ' · filtered' : ''}
           </span>
         }
       >
-        {dispatched.length === 0 ? (
-          <EmptyState>No slab has been dispatched from here yet.</EmptyState>
+        {slabs.length === 0 ? (
+          <EmptyState>
+            {filtered ? 'No dispatched slab matches these filters.' : 'No slab has been dispatched yet.'}
+          </EmptyState>
         ) : (
           <div className="overflow-x-auto">
             <table className={dataTable.root}>
@@ -172,26 +152,24 @@ export default async function DispatchPage({
                   <th className={th}>File Name / Planned Design</th>
                   <th className={`${th} text-right`}>Thickness (cm)</th>
                   <th className={th}>Grade</th>
+                  <th className={th}>Slab Remarks</th>
                 </tr>
               </thead>
               <tbody>
-                {dispatched.map((row) => (
-                  <tr key={row.id} className={dataTable.row}>
-                    <td className={`${td} font-medium whitespace-nowrap`}>
-                      {dateFmt.format(row.dispatchDate)}
-                    </td>
-                    <td className={`${tdMuted} whitespace-nowrap`}>
-                      {dateFmt.format(row.receivedDate)}
-                    </td>
-                    <td className={`${tdMuted} font-mono`}>{row.batchNo}</td>
-                    <td className={`${td} font-mono`}>{row.slabNo}</td>
-                    <td className={td}>{row.baseMaterial}</td>
-                    <td className={tdMuted}>{row.designFileName ?? '—'}</td>
-                    <td className={`${tdNum} text-right`}>
-                      {row.thicknessCm === null ? '—' : row.thicknessCm}
-                    </td>
+                {slabs.map((slab) => (
+                  <tr key={slab.id} className={dataTable.row}>
+                    <td className={`${td} font-medium whitespace-nowrap`}>{dateFmt.format(slab.dispatchDate)}</td>
+                    <td className={`${tdMuted} whitespace-nowrap`}>{dateFmt.format(slab.receivedDate)}</td>
+                    <td className={`${tdMuted} font-mono`}>{slab.batchNo}</td>
+                    <td className={`${td} font-mono`}>{slab.slabNo}</td>
+                    <td className={td}>{slab.baseMaterial}</td>
+                    <td className={tdMuted}>{slab.designFileName ?? '—'}</td>
+                    <td className={`${tdNum} text-right`}>{slab.thicknessCm === null ? '—' : slab.thicknessCm}</td>
                     <td className={td}>
-                      <GradeBadge grade={row.grade} />
+                      <GradeBadge grade={slab.grade} />
+                    </td>
+                    <td className={`${td} max-w-[16rem]`}>
+                      {manualRemark(slab.remarks, slab.disposition) ?? <span className="text-muted">—</span>}
                     </td>
                   </tr>
                 ))}
