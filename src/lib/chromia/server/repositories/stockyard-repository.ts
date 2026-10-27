@@ -1,12 +1,21 @@
-import { ChromiaSlabStatus as SlabStatus } from '@prisma/client';
+import { ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
+import type { StockOutcomeValue } from '@/lib/chromia/constants/stock-outcomes';
 import { simpleSlabWhere, type SimpleFilters } from '@/lib/chromia/simple-filters';
+import { stockyardSlabWhere, type StockyardFilters } from '@/lib/chromia/stockyard-filters';
 
 /**
  * Stockyard data access.
  *
- * Two questions only: what is on the racks, and what has left them.
+ * What is on the racks, what has left them and how, and the yard's totals.
  */
+
+/**
+ * What "in stock" means, once: on the rack now. The In Stock Records table and
+ * the Dashboard's Current Stock Available both ask exactly this, so with no
+ * filter set the KPI and the table's row count are the same number.
+ */
+const IN_STOCK_NOW = { deletedAt: null, status: SlabStatus.IN_STOCK } as const;
 
 /**
  * Every slab whose current outcome is Stock, oldest holding first.
@@ -15,12 +24,11 @@ import { simpleSlabWhere, type SimpleFilters } from '@/lib/chromia/simple-filter
  * number — the same three the Recalibration page takes — AND-ed onto the "in
  * stock" condition. No filters means the whole rack, exactly as before.
  */
-export async function listStockedSlabs(filters?: SimpleFilters) {
+export async function listStockedSlabs(filters?: SimpleFilters | StockyardFilters) {
   const slabs = await prisma.chromiaSlab.findMany({
     where: {
-      deletedAt: null,
-      status: SlabStatus.IN_STOCK,
-      ...(filters ? simpleSlabWhere(filters) : {}),
+      ...IN_STOCK_NOW,
+      ...(filters ? ('outcome' in filters ? stockyardSlabWhere(filters) : simpleSlabWhere(filters)) : {}),
     },
     orderBy: [{ receivedDate: 'asc' }, { createdAt: 'asc' }],
     select: {
@@ -50,57 +58,117 @@ export async function listStockedSlabs(filters?: SimpleFilters) {
   }));
 }
 
+// ─────────────────────────────────────────────── Stockyard (27 Oct 2026) ───
+
+export interface StockyardKpis {
+  /** Every slab that has ever entered stock — still there, or sent on. */
+  totalStock: number;
+  /** On the rack now: the In Stock Records table's own count. */
+  currentStock: number;
+  dispatched: number;
+  approved: number;
+  sampleCutting: number;
+}
+
 /**
- * Slabs that went out from the racks — the release log.
- *
- * A dispatch counts as a stockyard release when the slab has a closed stock
- * holding behind it, which is exactly what `recordDispatch` writes when it
- * releases the rack.
+ * The Stockyard Dashboard, counted from the stock entries themselves — always
+ * the whole yard, never the filters. Each figure counts SLABS (a slab stocked
+ * twice is one slab). Total = Current + Dispatched + Approved + Sample Cutting,
+ * except for a slab that left stock some other way before 27 Oct 2026 (sent
+ * for recalibration from the rack), which is in the total only.
  */
-export async function listStockReleases(take = 50) {
-  const dispatches = await prisma.chromiaDispatch.findMany({
-    where: { slab: { deletedAt: null, stockEntries: { some: { releasedAt: { not: null } } } } },
-    orderBy: [{ dispatchDate: 'desc' }, { createdAt: 'desc' }],
-    take,
+export async function stockyardKpis(): Promise<StockyardKpis> {
+  const left = (outcome: StockOutcome) =>
+    prisma.chromiaSlab.count({ where: { deletedAt: null, stockEntries: { some: { releaseOutcome: outcome } } } });
+  const [totalStock, currentStock, dispatched, approved, sampleCutting] = await Promise.all([
+    prisma.chromiaSlab.count({ where: { deletedAt: null, stockEntries: { some: {} } } }),
+    prisma.chromiaSlab.count({ where: IN_STOCK_NOW }),
+    left(StockOutcome.DISPATCH),
+    left(StockOutcome.APPROVED),
+    left(StockOutcome.SAMPLE_CUTTING),
+  ]);
+  return { totalStock, currentStock, dispatched, approved, sampleCutting };
+}
+
+export interface StockyardFilterOptions {
+  batchNos: string[];
+  slabNos: string[];
+  baseMaterials: string[];
+  fileNames: string[];
+}
+
+/**
+ * The values Find a Slab's dropdowns offer: those of every slab that has ever
+ * entered stock, as Slab Entry recorded them — so each suggestion finds
+ * something, in stock or in the yard's history.
+ */
+export async function stockyardFilterOptions(): Promise<StockyardFilterOptions> {
+  const slabs = await prisma.chromiaSlab.findMany({
+    where: { deletedAt: null, stockEntries: { some: {} } },
+    select: {
+      slabNo: true,
+      batch: { select: { batchNo: true } },
+      baseMaterial: { select: { name: true } },
+      plannedDesign: { select: { name: true, fileName: true } },
+    },
+  });
+  const sorted = (values: (string | null | undefined)[]) =>
+    [...new Set(values.filter((v): v is string => Boolean(v && v.trim())))].sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+  return {
+    batchNos: sorted(slabs.map((s) => s.batch.batchNo)),
+    slabNos: sorted(slabs.map((s) => s.slabNo)),
+    baseMaterials: sorted(slabs.map((s) => s.baseMaterial.name)),
+    fileNames: sorted(slabs.map((s) => s.plannedDesign?.fileName ?? s.plannedDesign?.name)),
+  };
+}
+
+/**
+ * Slabs that left stock by one outcome, newest first, narrowed by the rest of
+ * the filters — the In Stock Records table when a Stock Outcome is chosen.
+ * Read-only: the slab has gone, and the row says where and when.
+ */
+export async function listStockOutcomeRecords(outcome: StockOutcomeValue, filters: StockyardFilters) {
+  const entries = await prisma.chromiaStockEntry.findMany({
+    where: {
+      releaseOutcome: outcome as StockOutcome,
+      slab: { deletedAt: null, ...stockyardSlabWhere(filters) },
+    },
+    orderBy: [{ releasedAt: 'desc' }, { updatedAt: 'desc' }],
     select: {
       id: true,
-      dispatchDate: true,
-      createdAt: true,
+      stockDate: true,
+      releasedAt: true,
+      releaseOutcome: true,
       slab: {
         select: {
           id: true,
           slabNo: true,
-          currentGrade: true,
+          receivedDate: true,
           currentThicknessMm: true,
+          currentGrade: true,
+          currentDisposition: true,
+          remarks: true,
           batch: { select: { batchNo: true } },
           baseMaterial: { select: { name: true } },
           plannedDesign: { select: { name: true, fileName: true } },
-          stockEntries: {
-            where: { releasedAt: { not: null } },
-            orderBy: { releasedAt: 'desc' },
-            take: 1,
-            select: { stockDate: true },
-          },
         },
       },
     },
   });
 
-  return dispatches.map((dispatch) => ({
-    id: dispatch.id,
-    dispatchDate: dispatch.dispatchDate,
-    recordedAt: dispatch.createdAt,
-    slabId: dispatch.slab.id,
-    slabNo: dispatch.slab.slabNo,
-    batchNo: dispatch.slab.batch.batchNo,
-    baseMaterial: dispatch.slab.baseMaterial.name,
-    designFileName:
-      dispatch.slab.plannedDesign?.fileName ?? dispatch.slab.plannedDesign?.name ?? null,
-    thicknessCm:
-      dispatch.slab.currentThicknessMm === null
-        ? null
-        : Number(dispatch.slab.currentThicknessMm) / 10,
-    grade: dispatch.slab.currentGrade,
-    stockDate: dispatch.slab.stockEntries[0]?.stockDate ?? null,
+  return entries.map(({ slab, ...entry }) => ({
+    ...entry,
+    slabId: slab.id,
+    slabNo: slab.slabNo,
+    receivedDate: slab.receivedDate,
+    thicknessCm: slab.currentThicknessMm === null ? null : Number(slab.currentThicknessMm) / 10,
+    currentGrade: slab.currentGrade,
+    currentDisposition: slab.currentDisposition,
+    remarks: slab.remarks,
+    batch: slab.batch,
+    baseMaterial: slab.baseMaterial,
+    plannedDesign: slab.plannedDesign,
   }));
 }

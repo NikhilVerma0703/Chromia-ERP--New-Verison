@@ -80,7 +80,7 @@ describe('Stockyard → Stock Outcome (27 Oct 2026)', () => {
     expect(send.indexOf('sentOn < stockedOn')).toBeLessThan(send.indexOf('switch (input.outcome)'));
     const form = read('src/app/chromia/stockyard/stock-outcome-form.tsx');
     expect(form).toMatch(/max=\{today\}\n\s+min=\{stockedOn \?\? undefined\}/);
-    expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/stockedOn=\{stockedOnDay\(slab\.stockDate\)\}/);
+    expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/stockedOn=\{stockedOnDay\(row\.stockDate\)\}/);
   });
 
   it('takes the slab off the rack for every outcome, claiming it, and keeps its history', () => {
