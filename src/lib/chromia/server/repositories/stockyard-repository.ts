@@ -29,6 +29,8 @@ export async function listStockedSlabs(filters?: SimpleFilters) {
       receivedDate: true,
       currentThicknessMm: true,
       currentGrade: true,
+      currentDisposition: true,
+      remarks: true,
       batch: { select: { batchNo: true } },
       baseMaterial: { select: { name: true } },
       plannedDesign: { select: { name: true, fileName: true } },

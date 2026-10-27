@@ -29,6 +29,7 @@ export const SlabStatus = {
   RECEIVED: 'RECEIVED', IN_PROCESS: 'IN_PROCESS', UNDER_INSPECTION: 'UNDER_INSPECTION', GRADED: 'GRADED',
   OUT_FOR_RECALIBRATION: 'OUT_FOR_RECALIBRATION', RECEIVED_FROM_RECALIBRATION: 'RECEIVED_FROM_RECALIBRATION',
   IN_STOCK: 'IN_STOCK', SAMPLE_CUT: 'SAMPLE_CUT', DISPATCHED: 'DISPATCHED', WASTE: 'WASTE', ON_HOLD: 'ON_HOLD',
+  APPROVED: 'APPROVED',
 } as const satisfies Record<SlabStatusType, SlabStatusType>;
 // Prisma exports each enum as a value AND a type of the same name; callers
 // write `grade: SlabGrade` in a signature and `SlabGrade.A` in a body. Keep
@@ -130,6 +131,8 @@ export const SLAB_STATUS_LABELS: Record<SlabStatusType, string> = {
   DISPATCHED: 'Dispatched',
   WASTE: 'Waste',
   ON_HOLD: 'On Hold',
+  // Sent from the Stockyard as Approved (27 Oct 2026).
+  APPROVED: 'Approved',
 };
 
 /**

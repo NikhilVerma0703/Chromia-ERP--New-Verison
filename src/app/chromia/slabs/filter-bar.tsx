@@ -26,6 +26,8 @@ const STATUS_CHOICES: readonly SlabStatus[] = [
   SlabStatus.IN_STOCK,
   SlabStatus.SAMPLE_CUT,
   SlabStatus.OUT_FOR_RECALIBRATION,
+  // Sent from the Stockyard as Approved (27 Oct 2026).
+  SlabStatus.APPROVED,
 ];
 
 /** The four outcomes the QC section can actually record. */

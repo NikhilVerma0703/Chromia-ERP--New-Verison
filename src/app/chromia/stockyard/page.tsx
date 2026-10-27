@@ -11,12 +11,13 @@ import {
   type RawSearchParams,
 } from '@/lib/chromia/simple-filters';
 import { daysBetween } from '@/lib/chromia/utils/dates';
+import { manualRemark } from '@/lib/chromia/slab-remarks';
+import { stockyardToday } from '@/lib/chromia/constants/stock-outcomes';
 import { listStockedSlabs, listStockReleases } from '@/lib/chromia/server/repositories/stockyard-repository';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { requirePageUser } from '@/lib/pageUser';
 
-import { RecalibrateButton } from './recalibrate-button';
-import { ReleaseForm } from './release-form';
+import { StockOutcomeForm } from './stock-outcome-form';
 
 export const metadata: Metadata = { title: 'Stockyard' };
 export const dynamic = 'force-dynamic';
@@ -28,11 +29,6 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
 
 const { th, td, tdMuted, tdNum } = dataTable;
 
-function toDateInput(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
 /**
  * Stockyard.
  *
@@ -43,6 +39,15 @@ function toDateInput(date: Date): string {
  *
  * This page is that one step, kept deliberately apart from QC and Slab Intake:
  * the racks on top, the release log underneath.
+ *
+ * STOCK OUTCOME (27 Oct 2026). The In Stock table is every slab whose QC
+ * Outcome is Stock and that is still on the rack (status IN_STOCK) — Grade A
+ * and Grade B alike, straight from Slab Entry's QC Report. Each row leaves by
+ * one of three outcomes, Dispatch, Approved or Sample Cutting, on a date no
+ * later than today in IST, and is then gone from the table (sendFromStock).
+ * Sending a stocked slab for recalibration is no longer offered here. The
+ * sections for Approved and Sample Cutting are still to come; Dispatched from
+ * stock, below, is unchanged.
  */
 export default async function StockyardPage({
   searchParams,
@@ -64,7 +69,8 @@ export default async function StockyardPage({
   ]);
 
   const now = new Date();
-  const today = toDateInput(now);
+  // Today in the plant (IST) — the latest date a row's calendar offers.
+  const today = stockyardToday(now);
 
   return (
     <>
@@ -111,14 +117,15 @@ export default async function StockyardPage({
                         Stock at QC is stocked on its production date, so the two
                         are the same day and the register's date is the one shown. */}
                     <th className={th}>Production Date</th>
-                    <th className={th}>Batch No.</th>
-                    <th className={th}>Slab No.</th>
+                    <th className={th}>Batch Number</th>
+                    <th className={th}>Slab Number</th>
                     <th className={th}>Base Material / Slab Name</th>
                     <th className={th}>File Name / Planned Design</th>
                     <th className={`${th} text-right`}>Thickness (cm)</th>
                     <th className={th}>Grade</th>
+                    <th className={th}>Slab Remarks</th>
                     <th className={`${th} text-right`}>Days in Stock</th>
-                    <th className={`${th} text-right`}>Actions</th>
+                    <th className={`${th} text-right`}>Stock Outcome</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -139,16 +146,14 @@ export default async function StockyardPage({
                       <td className={td}>
                         <GradeBadge grade={slab.currentGrade} />
                       </td>
+                      <td className={`${td} max-w-[16rem]`}>
+                        {manualRemark(slab.remarks, slab.currentDisposition) ?? <span className="text-muted">—</span>}
+                      </td>
                       <td className={`${tdNum} text-right`}>
                         {slab.stockDate === null ? '—' : daysBetween(slab.stockDate, now)}
                       </td>
                       <td className={`${td} text-right`}>
-                        {/* Two exits from the rack, side by side: dispatch it,
-                            or send it for recalibration. */}
-                        <div className="flex items-center justify-end gap-2">
-                          <ReleaseForm slabId={slab.id} today={today} />
-                          <RecalibrateButton slabId={slab.id} slabNo={slab.slabNo} />
-                        </div>
+                        <StockOutcomeForm slabId={slab.id} slabNo={slab.slabNo} today={today} />
                       </td>
                     </tr>
                   ))}

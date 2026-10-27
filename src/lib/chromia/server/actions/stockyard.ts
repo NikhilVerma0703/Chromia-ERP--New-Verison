@@ -5,8 +5,8 @@ import { revalidatePath } from 'next/cache';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { requireActingUser } from '@/lib/chromia/current-user';
 import { isAppError } from '@/lib/chromia/errors';
-import { stockRecalibrationSchema, stockReleaseSchema } from '@/lib/chromia/validation/stockyard';
-import { releaseFromStock, sendStockToRecalibration } from '@/lib/chromia/server/services/stockyard-service';
+import { stockOutcomeSchema, stockRecalibrationSchema, stockReleaseSchema } from '@/lib/chromia/validation/stockyard';
+import { releaseFromStock, sendFromStock, sendStockToRecalibration } from '@/lib/chromia/server/services/stockyard-service';
 
 export interface StockyardFormState {
   error?: string;
@@ -95,4 +95,50 @@ export async function sendToRecalibrationAction(
   revalidatePath(APP_ROUTES.reports);
 
   return { recalibratedSlabNo: slabNo, releasedAt: Date.now() };
+}
+
+/**
+ * A row's Stock Outcome — Dispatch, Approved or Sample Cutting, and its date
+ * (27 Oct 2026). The slab leaves the In Stock table once this returns; see
+ * sendFromStock. The date is checked against today in IST here as well as
+ * capped in the page's date picker.
+ */
+export async function sendFromStockAction(
+  _previousState: StockyardFormState,
+  formData: FormData,
+): Promise<StockyardFormState> {
+  const value = (key: string) => {
+    const raw = formData.get(key);
+    return typeof raw === 'string' ? raw : undefined;
+  };
+
+  const parsed = stockOutcomeSchema.safeParse({
+    slabId: value('slabId'),
+    outcome: value('outcome'),
+    date: value('date'),
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Choose an outcome and a date.' };
+  }
+
+  let slabNo: string;
+
+  try {
+    const user = await requireActingUser();
+    const sent = await sendFromStock(parsed.data, user.id);
+    slabNo = sent.slabNo;
+  } catch (error) {
+    if (isAppError(error)) return { error: error.message };
+    if (error instanceof Error) return { error: error.message };
+    throw error;
+  }
+
+  revalidatePath(APP_ROUTES.stockyard);
+  revalidatePath(APP_ROUTES.slabs);
+  revalidatePath(APP_ROUTES.dashboard);
+  revalidatePath(APP_ROUTES.reports);
+  revalidatePath(APP_ROUTES.operator);
+
+  return { releasedSlabNo: slabNo, releasedAt: Date.now() };
 }

@@ -122,8 +122,21 @@ enum ChromiaSlabStatus {
   DISPATCHED
   WASTE
   ON_HOLD
+  /// Sent from the Stockyard as Approved (27 Oct 2026, migration 0003). Off
+  /// the rack, still Chromia's; its own section is to come.
+  APPROVED
 
   @@map("chromia_slab_status")
+}
+
+/// Where a stocked slab went when it left the Stockyard — the Stock Outcome
+/// the yard chose (27 Oct 2026, migration 0003).
+enum ChromiaStockOutcome {
+  DISPATCH
+  APPROVED
+  SAMPLE_CUTTING
+
+  @@map("chromia_stock_outcome")
 }
 
 enum ChromiaCycleStatus {
@@ -1113,11 +1126,15 @@ model ChromiaDispatch {
 }
 
 model ChromiaStockEntry {
-  id         String    @id @default(uuid())
-  stockDate  DateTime  @map("stock_date")
-  quantity   Int       @default(1)
-  releasedAt DateTime? @map("released_at")
-  notes      String?
+  id             String               @id @default(uuid())
+  stockDate      DateTime             @map("stock_date")
+  quantity       Int                  @default(1)
+  releasedAt     DateTime?            @map("released_at")
+  /// The Stock Outcome that took the slab off the rack, with releasedAt as its
+  /// date. Null for a slab still in stock, and for releases recorded before
+  /// the field existed (or sent for recalibration).
+  releaseOutcome ChromiaStockOutcome? @map("release_outcome")
+  notes          String?
 
   slabId String      @map("slab_id")
   slab   ChromiaSlab @relation(fields: [slabId], references: [id], onDelete: Cascade)

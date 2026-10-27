@@ -140,7 +140,8 @@ test("CHR-6: dispatch, stock, sample cutting and waste each claim the slab first
 test("CHR-1/CHR-6: claimSlab is shared, so every write that moves a slab on claims it the same way", () => {
   assert.match(DISPOSITION, /\nexport async function claimSlab\(\n\s+tx: ChromiaTx,\n\s+slab: Pick<Slab, 'id' \| 'slabNo' \| 'status' \| 'currentDisposition'>,/);
   assert.match(OUTCOME, /import \{ claimSlab \} from '@\/lib\/chromia\/server\/services\/disposition-service';/);
-  assert.match(STOCKYARD, /import \{ claimSlab, recordDispatch \} from '@\/lib\/chromia\/server\/services\/disposition-service';/);
+  // recordSampleCutting joined it for the Stock Outcome (27 Oct 2026).
+  assert.match(STOCKYARD, /import \{ claimSlab, recordDispatch(, recordSampleCutting)? \} from '@\/lib\/chromia\/server\/services\/disposition-service';/);
 });
 
 test("CHR-1/CHR-6: the QC reset claims the slab before it clears anything, and never overwrites it unguarded", () => {

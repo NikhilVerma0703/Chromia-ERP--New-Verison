@@ -5,10 +5,10 @@ import { EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
 import { toDateInput, toTimeInput } from '@/lib/chromia/operator-register';
 import { qcCorrectionRefusal } from '@/lib/chromia/qc-correction';
 import { needsIntakeQc } from '@/lib/chromia/slab-links';
+import { manualRemark } from '@/lib/chromia/slab-remarks';
 import { link } from '@/lib/chromia/ui';
 import { listRecalibrationReasons } from '@/lib/chromia/server/repositories/recalibration-repository';
 import { loadSlabRecord } from '@/lib/chromia/server/repositories/slab-record-repository';
@@ -47,21 +47,6 @@ function resolveDay(raw: string | string[] | undefined): string {
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return toDateInput(new Date());
-}
-
-/**
- * A remark worth a column: one somebody wrote. Until 27 Oct 2026 the QC
- * section filled the remark with the chosen outcome ("Stock", "Dispatch"),
- * which only repeats QC Outcome — such a remark, on a slab graded before the
- * change, is not shown as if it had been typed.
- */
-function manualRemark(remarks: string | null, disposition: string | null): string | null {
-  const value = remarks?.trim();
-  if (!value) return null;
-  if (disposition && value.toLowerCase() === DISPOSITION_LABELS[disposition as keyof typeof DISPOSITION_LABELS]?.toLowerCase()) {
-    return null;
-  }
-  return value;
 }
 
 /**

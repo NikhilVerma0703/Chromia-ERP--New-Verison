@@ -1,10 +1,10 @@
-import { ChromiaDisposition as Disposition, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
+import { ChromiaDisposition as Disposition, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
 import { BusinessRuleViolationError, NotFoundError } from '@/lib/chromia/errors';
 import { createLogger } from '@/lib/chromia/logger';
 import { isWriteOff, MAX_ATTEMPTS } from '@/lib/chromia/recalibration-flow';
-import type { StockReleaseInput } from '@/lib/chromia/validation/stockyard';
-import { claimSlab, recordDispatch } from '@/lib/chromia/server/services/disposition-service';
+import type { StockOutcomeInput, StockReleaseInput } from '@/lib/chromia/validation/stockyard';
+import { claimSlab, recordDispatch, recordSampleCutting } from '@/lib/chromia/server/services/disposition-service';
 import { markAwaitingRecalibration } from '@/lib/chromia/server/services/recalibration-flow-service';
 
 const log = createLogger('stockyard');
@@ -159,6 +159,80 @@ export async function sendStockToRecalibration(input: { slabId: string }, userId
   });
 
   log.info({ slabNo: slab.slabNo }, 'Sent from stock for recalibration');
+
+  return { id: slab.id, slabNo: slab.slabNo };
+}
+
+/**
+ * Stock Outcome — a stocked slab sent from the Stockyard (27 Oct 2026):
+ * Dispatch, Approved or Sample Cutting, on the day it happened.
+ *
+ * Every outcome takes the slab OFF the rack for good: its status leaves
+ * IN_STOCK (so the In Stock table, which lists IN_STOCK, no longer shows it)
+ * and its open stock entry is closed with that date and the outcome. Each
+ * write claims the slab against the status it was read with (CHR-6), so two
+ * tablets sending the same slab cannot both succeed.
+ *
+ *   Dispatch       → recordDispatch, exactly as "Dispatched from stock" always
+ *                    was: a chromia_dispatch row, status DISPATCHED.
+ *   Sample Cutting → recordSampleCutting, which already accepts a slab from
+ *                    stock: a chromia_sample_cutting row, status SAMPLE_CUT.
+ *   Approved       → status APPROVED, here. It has no record of its own yet;
+ *                    the closed stock entry (outcome APPROVED, released_at the
+ *                    date) and the slab event are its record until the Approved
+ *                    section is built.
+ *
+ * Nothing is deleted: the slab, its stock entry and its history stay, so the
+ * slab's whole journey remains traceable.
+ */
+export async function sendFromStock(input: StockOutcomeInput, userId: string) {
+  const slab = await prisma.chromiaSlab.findFirst({
+    where: { id: input.slabId, deletedAt: null },
+    select: { id: true, slabNo: true, status: true, currentDisposition: true },
+  });
+
+  if (!slab) throw new NotFoundError('Slab');
+
+  if (slab.status !== SlabStatus.IN_STOCK) {
+    throw new BusinessRuleViolationError(`Slab ${slab.slabNo} is not in stock any more, so it cannot be sent from the stockyard`);
+  }
+
+  switch (input.outcome) {
+    case 'DISPATCH':
+      await recordDispatch({ slabId: slab.id, dispatchDate: input.date }, userId, {
+        note: 'Dispatched from stock',
+      });
+      break;
+
+    case 'SAMPLE_CUTTING':
+      await recordSampleCutting({ slabId: slab.id, cutDate: input.date }, userId);
+      break;
+
+    case 'APPROVED':
+      await prisma.$transaction(async (tx) => {
+        await claimSlab(tx, slab, { status: SlabStatus.APPROVED, updatedById: userId });
+
+        await tx.chromiaStockEntry.updateMany({
+          where: { slabId: slab.id, releasedAt: null },
+          data: { releasedAt: input.date, releaseOutcome: StockOutcome.APPROVED },
+        });
+
+        await tx.chromiaSlabEvent.create({
+          data: {
+            slabId: slab.id,
+            eventType: SlabEventType.STATUS_CHANGED,
+            fromStatus: SlabStatus.IN_STOCK,
+            toStatus: SlabStatus.APPROVED,
+            userId,
+            occurredAt: input.date,
+            note: 'Approved from stock',
+          },
+        });
+      });
+      break;
+  }
+
+  log.info({ slabNo: slab.slabNo, outcome: input.outcome, date: input.date }, 'Sent from stock');
 
   return { id: slab.id, slabNo: slab.slabNo };
 }

@@ -29,6 +29,8 @@ const CLOSED_PASSED: readonly SlabStatus[] = [
   SlabStatus.DISPATCHED,
   SlabStatus.IN_STOCK,
   SlabStatus.SAMPLE_CUT,
+  // Approved from the Stockyard (27 Oct 2026) — it passed, like the rest.
+  SlabStatus.APPROVED,
 ];
 
 // ------------------------------------------------------------- headline ---

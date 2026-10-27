@@ -59,6 +59,7 @@ export function deriveStage(input: StageInput): TrackingStage {
     case SlabStatus.DISPATCHED:
     case SlabStatus.IN_STOCK:
     case SlabStatus.SAMPLE_CUT:
+    case SlabStatus.APPROVED:
       return 'PASSED';
 
     case SlabStatus.OUT_FOR_RECALIBRATION:

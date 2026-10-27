@@ -1,4 +1,4 @@
-import { ChromiaDisposition as Disposition, ChromiaMovementReason as MovementReason, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus, type Prisma } from '@prisma/client';
+import { ChromiaDisposition as Disposition, ChromiaMovementReason as MovementReason, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome, type Prisma } from '@prisma/client';
 import { MAX_RECALIBRATION_ATTEMPTS } from '@/lib/chromia/constants/process-stages';
 import { prisma, withTransaction, type ChromiaDb, type ChromiaTx } from '@/lib/chromia/db';
 import { BusinessRuleViolationError, NotFoundError } from '@/lib/chromia/errors';
@@ -27,6 +27,9 @@ const TERMINAL_STATUSES: readonly SlabStatus[] = [
   SlabStatus.DISPATCHED,
   SlabStatus.SAMPLE_CUT,
   SlabStatus.WASTE,
+  // Sent from the Stockyard as Approved (27 Oct 2026): off the rack, its next
+  // step belongs to the Approved section still to come, not to these services.
+  SlabStatus.APPROVED,
 ];
 
 async function loadSlab(slabId: string, db: ChromiaDb = prisma) {
@@ -155,10 +158,11 @@ export async function recordDispatch(
       },
     });
 
-    // Close any open stock holding.
+    // Close any open stock holding — and say it left as a Dispatch, the
+    // Stockyard's Stock Outcome (migration 0003).
     await tx.chromiaStockEntry.updateMany({
       where: { slabId: slab.id, releasedAt: null },
-      data: { releasedAt: dispatchDate },
+      data: { releasedAt: dispatchDate, releaseOutcome: StockOutcome.DISPATCH },
     });
 
     await tx.chromiaSlabEvent.create({
@@ -316,7 +320,7 @@ export async function recordSampleCutting(
 
     await tx.chromiaStockEntry.updateMany({
       where: { slabId: slab.id, releasedAt: null },
-      data: { releasedAt: cutDate },
+      data: { releasedAt: cutDate, releaseOutcome: StockOutcome.SAMPLE_CUTTING },
     });
 
     await tx.chromiaSlabEvent.create({

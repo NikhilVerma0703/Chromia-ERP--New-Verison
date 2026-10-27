@@ -32,6 +32,7 @@ const STATUS_TONE: Record<SlabStatusType, Tone> = {
   DISPATCHED: 'done',
   WASTE: 'waste',
   ON_HOLD: 'hold',
+  APPROVED: 'done',
 };
 
 export interface StatusView {
