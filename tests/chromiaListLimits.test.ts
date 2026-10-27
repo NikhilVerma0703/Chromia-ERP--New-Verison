@@ -92,13 +92,18 @@ test("every match's STATE is read thin, and the full rows only for the page show
   }
 });
 
-test("the Recalibration page shows a page, and counts waiting and out over every match", () => {
+test("the Recalibration page shows a page, and counts its KPIs over every slab on the board", () => {
+  // Rebuilt 27 Oct 2026 (Dashboard · Find a Slab · Recalibration Records):
+  // still a page at a time, the KPIs still over every match, not the page.
   const page = read("src/app/chromia/recalibrations/page.tsx");
-  assert.match(page, /\{ page: parsePage\(params\.page\), pageSize: RECALIBRATION_PAGE_SIZE \},/);
-  assert.match(page, /const waiting = result\.states\.filter\(\(current\) => stageOf\(current\) === 'AWAITING_SEND'\)\.length;/);
-  assert.match(page, /const away = result\.states\.filter\(\(current\) => stageOf\(current\) === 'OUT'\)\.length;/);
-  assert.match(page, /<PageNav page=\{result\.page\} pages=\{result\.pages\} href=\{pageHref\} \/>/);
-  assert.match(page, /return `\$\{APP_ROUTES\.recalibrations\}\?\$\{query \? `\$\{query\}&` : ''\}page=\$\{page\}`;/);
+  assert.match(page, /loadRecalibrationBoard\(filters, \{ page: parsePage\(params\.page\), pageSize: RECALIBRATION_PAGE_SIZE \}\)/);
+  assert.match(page, /<PageNav page=\{board\.page\} pages=\{board\.pages\} href=\{pageHref\} \/>/);
+  const repo = read("src/lib/chromia/server/repositories/recalibration-flow-repository.ts");
+  const board = repo.slice(repo.indexOf("export async function loadRecalibrationBoard("));
+  assert.match(board, /const kpis = boardKpis\(everything\);/);
+  assert.match(board, /const cut = pageWindow\(all\.length, options\.page, options\.pageSize\);/);
+  // Only the page shown is read in full.
+  assert.match(board, /where: \{ id: \{ in: ids \} \}, select: SLAB_FIELDS/);
 });
 
 test("Recalibration Tracking: the attempt filter and the figures cover every match, the table a page", () => {

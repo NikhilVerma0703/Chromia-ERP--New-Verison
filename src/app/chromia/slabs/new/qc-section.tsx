@@ -9,7 +9,7 @@ import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { DISPOSITION_LABELS, GRADE_ALLOWED_DISPOSITIONS } from '@/lib/chromia/constants/process-stages';
 import { Disposition, SlabGrade } from '@/lib/chromia/constants/process-stages';
 
-import { field, FieldGrid, OutcomePanel, selectField } from './ui';
+import { field, FieldGrid, selectField } from './ui';
 
 export interface Option {
   id: string;
@@ -165,28 +165,29 @@ export function QcSection({ recalibrationReasons, errors, initial, remarksField 
         </Field>
       </FieldGrid>
 
-      {/* Recalibration keeps its reason — the one outcome-specific field QC
-          still fills, because the reason is decided at the bench, not later. */}
+      {/* REASON FOR RECALIBRATION — Grade C's own field, decided at the bench,
+          directly above Slab Remarks and kept apart from it (27 Oct 2026). A
+          searchable list of the reasons already saved; a reason typed that is
+          not on it is saved as a new one (resolveRecalibrationReasonId). It is
+          stored on the recalibration record, never in the remark. */}
       {disposition === Disposition.RECALIBRATION ? (
-        <OutcomePanel title="Recalibration">
-          <FieldGrid>
-            <Field
-              label="Recalibrate Reason"
-              htmlFor="recalibrationReason"
-              error={errors?.recalibrationReason?.[0]}
-            >
-              <ComboInput
-                id="recalibrationReason"
-                name="recalibrationReason"
-                options={recalibrationReasons.map((reason) => reason.name)}
-                value={reasonName}
-                onChange={setReasonName}
-                placeholder="Pick one, or type a new reason"
-                className={field}
-              />
-            </Field>
-          </FieldGrid>
-        </OutcomePanel>
+        <FieldGrid>
+          <Field
+            label="Reason for Recalibration"
+            htmlFor="recalibrationReason"
+            error={errors?.recalibrationReason?.[0]}
+          >
+            <ComboInput
+              id="recalibrationReason"
+              name="recalibrationReason"
+              options={recalibrationReasons.map((reason) => reason.name)}
+              value={reasonName}
+              onChange={setReasonName}
+              placeholder="Pick one, or type a new reason"
+              className={field}
+            />
+          </Field>
+        </FieldGrid>
       ) : null}
 
       {remarksField ? (

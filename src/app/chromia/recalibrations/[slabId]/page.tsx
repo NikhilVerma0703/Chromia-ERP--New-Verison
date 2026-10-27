@@ -1,12 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 
-import { EmptyState, PageHeader } from '@/components/chromia/ui';
+import { PageHeader } from '@/components/chromia/ui';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { actionFor, attemptsUsed, ordinal, statusLabel } from '@/lib/chromia/recalibration-flow';
-import { toTimeInput } from '@/lib/chromia/operator-register';
+import { toDateInput, toTimeInput } from '@/lib/chromia/operator-register';
+import { toPlantDateInput } from '@/lib/chromia/plant-time';
+import { openTrip, stageOf, statusLabel } from '@/lib/chromia/recalibration-flow';
+import { manualRemark } from '@/lib/chromia/slab-remarks';
 import { listRecalibrationReasons } from '@/lib/chromia/server/repositories/recalibration-repository';
-import { findRecalibrationRecord } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
+import { loadSlabTrips } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
+import { loadSlabRecord } from '@/lib/chromia/server/repositories/slab-record-repository';
 import {
   loadBaseMaterialNames,
   loadDesignFileNames,
@@ -14,162 +18,105 @@ import {
 } from '@/lib/chromia/server/services/operator-service';
 import { requirePageUser } from '@/lib/pageUser';
 
-import { QcPanel } from '../../operator/qc-panel';
-import { RestartForm } from './restart-form';
-import { TripForm } from './trip-form';
+import { RecalibrationSlabForm } from './slab-form';
 
 export const metadata: Metadata = { title: 'Recalibration' };
 export const dynamic = 'force-dynamic';
 
-function toDateInput(date: Date | null): string {
-  if (!date) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
+/** A stored day as the date input writes it, or ''. */
+const day = (date: Date | null) => (date ? toDateInput(date) : '');
 
 /**
- * One slab's next step.
- *
- * The in-charge taps the same slab number every time, and this decides what
- * that means today: record the trip, restart production, or grade the new
- * pass. Making the *route* constant and the *screen* follow the slab's state
- * is the difference between a workflow somebody can follow and three menu
- * items they have to choose between correctly.
+ * One slab's Recalibration form (rebuilt 27 Oct 2026) — opened by clicking
+ * its Slab No. on the Recalibration page. Send and Receive, Update Slab
+ * Details and QC Report together on one page (slab-form.tsx), pre-filled from
+ * the slab's own record and its trips, saved by one Update Slab button
+ * (updateRecalibrationSlabAction). The slab is the same record throughout.
  */
-export default async function RecalibrationSlabPage({
-  params,
-}: {
-  params: Promise<{ slabId: string }>;
-}) {
-  // Signed in, or no further, on every visit: the module layout's gate is
-  // not run again when the browser moves between this module's pages
-  // (requirePageUser in lib/pageUser.ts says why).
+export default async function RecalibrationSlabPage({ params }: { params: Promise<{ slabId: string }> }) {
   await requirePageUser();
   const { slabId } = await params;
-  const record = await findRecalibrationRecord(slabId);
 
-  if (!record) {
-    return (
-      <div className="mx-auto max-w-3xl">
-        <PageHeader title="Recalibration" />
-        <EmptyState>
-          That slab is not in the{' '}
-          <Link href={APP_ROUTES.recalibrations} className="text-brand-700 font-medium underline">
-            Recalibration
-          </Link>{' '}
-          list.
-        </EmptyState>
-      </div>
-    );
-  }
+  const [record, trips, reasons, baseMaterials, fileNames, batchNos] = await Promise.all([
+    loadSlabRecord(slabId),
+    loadSlabTrips(slabId),
+    listRecalibrationReasons(),
+    loadBaseMaterialNames(),
+    loadDesignFileNames(),
+    loadRecentBatchNos(),
+  ]);
+  if (!record) notFound();
 
   const state = {
     disposition: record.currentDisposition,
     writtenOff: record.status === 'WASTE',
-    trips: record.trips,
+    trips: trips.map(({ reason: _reason, ...trip }) => trip),
   };
+  const stage = stageOf(state);
+  // Part A records the trip waiting to be sent, or the one out.
+  const current = stage === 'AWAITING_SEND' || stage === 'OUT'
+    ? openTrip(state.trips) ?? trips.find((t) => t.sentDate === null) ?? null
+    : null;
+  const currentReason =
+    (current ? trips.find((t) => t.attemptNumber === current.attemptNumber)?.reason?.name : undefined) ??
+    [...trips].reverse().find((t) => t.reason)?.reason?.name ??
+    '';
 
-  const action = actionFor(state);
-  const used = attemptsUsed(record.trips);
-  const designFileName = record.plannedDesign?.fileName ?? record.plannedDesign?.name ?? '';
-
-  // ------------------------------------------------------------ the trip ---
-  if (action === 'TRIP') {
-    const open = record.trips.find((trip) => trip.receivedDate === null);
-
-    return (
-      <div className="mx-auto max-w-3xl">
-        <PageHeader
-          title={`Recalibration — ${record.slabNo}`}
-          description={`${ordinal(open?.attemptNumber ?? used + 1)} attempt · ${statusLabel(state)}`}
-        />
-        <TripForm
-          slab={{
-            id: record.id,
-            slabNo: record.slabNo,
-            batchNo: record.batch.batchNo,
-            baseMaterial: record.baseMaterial.name,
-            designFileName,
-            remarks: record.remarks ?? '',
-            sentDate: toDateInput(record.sentDate),
-            receivedDate: toDateInput(record.returnedDate),
-          }}
-        />
-      </div>
-    );
-  }
-
-  // ------------------------------------------------- restart production ---
-  if (action === 'RESTART') {
-    const [baseMaterials, fileNames, batchNos] = await Promise.all([
-      loadBaseMaterialNames(),
-      loadDesignFileNames(),
-      loadRecentBatchNos(),
-    ]);
-    const now = new Date();
-
-    return (
-      <div className="mx-auto max-w-4xl">
-        <PageHeader
-          title={`AFTER RECALIBRATION ATTEMPT "${used}"`}
-          description={`Slab ${record.slabNo} · back on the line for a full production cycle`}
-        />
-        <RestartForm
-          slab={{
-            id: record.id,
-            slabNo: record.slabNo,
-            batchNo: record.batch.batchNo,
-            baseMaterial: record.baseMaterial.name,
-            designFileName,
-            thicknessCm: record.thicknessCm === null ? '' : String(record.thicknessCm),
-            receivedDate: toDateInput(record.receivedDate),
-          }}
-          attempt={used}
-          baseMaterials={baseMaterials}
-          fileNames={fileNames}
-          batchNos={batchNos}
-          today={toDateInput(now)}
-          nowTime={toTimeInput(now)}
-        />
-      </div>
-    );
-  }
-
-  // ------------------------------------------------------------- QC again ---
-  if (action === 'QC') {
-    const recalibrationReasons = await listRecalibrationReasons();
-
-    return (
-      <div className="mx-auto max-w-3xl">
-        <PageHeader
-          title={`Slab intake — ${record.slabNo}`}
-          description={`After recalibration attempt ${used}`}
-        />
-        {/* The same QC section the operator screen shows, so a slab graded
-            after recalibration is graded by exactly the same rules and the same
-            code as one graded on its first pass. */}
-        <QcPanel
-          slabId={record.id}
-          slabNo={record.slabNo}
-          recalibrationReasons={recalibrationReasons}
-          // The slab's own remark, handed back unchanged: this screen has no
-          // remarks field, and grading must not blank what Slab Entry wrote.
-          initial={{ slabRemarks: record.remarks ?? '' }}
-        />
-      </div>
-    );
-  }
-
-  // ------------------------------------------------------- nothing to do ---
   return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader title={`Recalibration — ${record.slabNo}`} description={statusLabel(state, record.currentGrade)} />
-      <EmptyState>
-        This slab needs nothing from the recalibration desk.{' '}
-        <Link href={APP_ROUTES.recalibrations} className="text-brand-700 font-medium underline">
-          Back to Recalibration
-        </Link>
-      </EmptyState>
-    </div>
+    <>
+      <PageHeader
+        eyebrow="Recalibration"
+        title={`Slab ${record.slabNo}`}
+        description={statusLabel(state, record.currentGrade)}
+        actions={
+          <Link
+            href={APP_ROUTES.recalibrations}
+            className="border-line surface hover:border-line-strong inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-medium transition-colors hover:bg-[var(--surface-muted)]"
+          >
+            Back to Recalibration
+          </Link>
+        }
+      />
+
+      <RecalibrationSlabForm
+        // Keyed on the slab only: a save changes its stage, and remounting on
+        // that would drop the "saved" state that takes the user back.
+        key={record.id}
+        slabId={record.id}
+        stage={stage}
+        status={record.status}
+        trips={trips.map((trip) => ({
+          attemptNumber: trip.attemptNumber,
+          sentDate: day(trip.sentDate),
+          receivedDate: day(trip.receivedDate),
+          reason: trip.reason?.name ?? '',
+        }))}
+        currentTrip={
+          current
+            ? { attemptNumber: current.attemptNumber, sentDate: day(current.sentDate), receivedDate: day(current.receivedDate) }
+            : null
+        }
+        details={{
+          productionDate: toDateInput(record.receivedDate),
+          batchNo: record.batchNo,
+          slabNo: record.slabNo,
+          baseMaterial: record.baseMaterial,
+          fileName: record.designFileName,
+          thicknessCm: record.thicknessCm === null ? '' : String(record.thicknessCm),
+          inTime: record.inTime ? toTimeInput(record.inTime) : '',
+        }}
+        qc={{
+          grade: record.currentGrade ?? '',
+          disposition: record.currentDisposition ?? '',
+          reason: currentReason,
+          remarks: manualRemark(record.remarks, record.currentDisposition) ?? '',
+        }}
+        recalibrationReasons={reasons}
+        baseMaterials={baseMaterials}
+        fileNames={fileNames}
+        batchNos={batchNos}
+        today={toPlantDateInput(new Date())}
+      />
+    </>
   );
 }

@@ -1,7 +1,15 @@
-import { ChromiaDisposition as Disposition } from '@prisma/client';
+import { ChromiaDisposition as Disposition, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
 import { pageWindow } from '@/lib/chromia/list-limits';
 import type { TrackedSlab } from '@/lib/chromia/recalibration-kpis';
+import {
+  boardKpis,
+  boardRows,
+  boardSlabWhere,
+  type BoardFilters,
+  type BoardKpis,
+  type BoardSlab,
+} from '@/lib/chromia/recalibration-board';
 
 /**
  * Everything the Recalibration page reads.
@@ -199,4 +207,150 @@ export async function findRecalibrationRecord(slabId: string) {
   });
 
   return slab ? shape(slab) : null;
+}
+
+// ─────────────────────────────────────── Recalibration board (27 Oct 2026) ───
+
+/** The slabs QC sent to recalibration — the same rule recalibrationWhere uses. */
+const ON_THE_BOARD: Prisma.ChromiaSlabWhereInput = {
+  deletedAt: null,
+  OR: [{ currentDisposition: Disposition.RECALIBRATION }, { recalibrations: { some: {} } }],
+};
+
+async function boardStates(where: Record<string, unknown>): Promise<BoardSlab[]> {
+  const slabs = await prisma.chromiaSlab.findMany({
+    where: { AND: [ON_THE_BOARD, where as Prisma.ChromiaSlabWhereInput] },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+    select: {
+      id: true,
+      currentDisposition: true,
+      status: true,
+      recalibrations: {
+        orderBy: { attemptNumber: 'asc' },
+        select: { attemptNumber: true, sentDate: true, receivedDate: true, restartedAt: true },
+      },
+    },
+  });
+  return slabs.map((slab) => ({
+    id: slab.id,
+    disposition: slab.currentDisposition,
+    writtenOff: slab.status === 'WASTE',
+    trips: slab.recalibrations,
+  }));
+}
+
+/**
+ * The Recalibration page, once: the four KPIs for every slab on the board
+ * (never filtered), and the rows of the chosen KPI card narrowed by Find a
+ * Slab, a page at a time (CHR-10 — the board grows by thousands a year).
+ * Each row carries its slab, its trip's attempt / dates / reason, and the
+ * slab's whole state for the Current Status.
+ */
+export async function loadRecalibrationBoard(
+  filters: BoardFilters,
+  options: { page: number; pageSize: number },
+): Promise<{
+  kpis: BoardKpis;
+  rows: BoardRecord[];
+  total: number;
+  page: number;
+  pages: number;
+}> {
+  const [everything, matching] = await Promise.all([boardStates({}), boardStates(boardSlabWhere(filters))]);
+  const kpis = boardKpis(everything);
+  const all = boardRows(matching, filters.view);
+  const cut = pageWindow(all.length, options.page, options.pageSize);
+  const shown = all.slice(cut.skip, cut.skip + cut.take);
+
+  const ids = [...new Set(shown.map((row) => row.slabId))];
+  const slabs = await prisma.chromiaSlab.findMany({ where: { id: { in: ids } }, select: SLAB_FIELDS });
+  const byId = new Map(slabs.map((slab) => [slab.id, slab]));
+  const stateById = new Map(matching.map((state) => [state.id, state]));
+
+  const rows = shown.flatMap((row): BoardRecord[] => {
+    const slab = byId.get(row.slabId);
+    const state = stateById.get(row.slabId);
+    if (!slab || !state) return [];
+    const trip = slab.recalibrations.find((t) => t.attemptNumber === row.attemptNumber) ?? null;
+    return [
+      {
+        key: `${slab.id}:${row.attemptNumber ?? 0}`,
+        slabId: slab.id,
+        slabNo: slab.slabNo,
+        receivedDate: slab.receivedDate,
+        batchNo: slab.batch.batchNo,
+        baseMaterial: slab.baseMaterial.name,
+        designFileName: slab.plannedDesign?.fileName ?? slab.plannedDesign?.name ?? null,
+        thicknessCm: slab.currentThicknessMm === null ? null : Number(slab.currentThicknessMm) / 10,
+        grade: slab.currentGrade,
+        disposition: slab.currentDisposition,
+        remarks: slab.remarks,
+        attemptNumber: row.attemptNumber,
+        sentDate: trip?.sentDate ?? null,
+        tripReceivedDate: trip?.receivedDate ?? null,
+        // The trip's own reason, else the newest one QC gave this slab.
+        reason: trip?.reason?.name ?? [...slab.recalibrations].reverse().find((t) => t.reason)?.reason?.name ?? null,
+        state,
+      },
+    ];
+  });
+
+  return { kpis, rows, total: all.length, page: cut.page, pages: cut.pages };
+}
+
+export interface BoardRecord {
+  key: string;
+  slabId: string;
+  slabNo: string;
+  receivedDate: Date;
+  batchNo: string;
+  baseMaterial: string;
+  designFileName: string | null;
+  thicknessCm: number | null;
+  grade: string | null;
+  disposition: string | null;
+  remarks: string | null;
+  attemptNumber: number | null;
+  sentDate: Date | null;
+  tripReceivedDate: Date | null;
+  reason: string | null;
+  state: BoardSlab;
+}
+
+/** Find a Slab's dropdowns: the values of slabs on the board. */
+export async function boardFilterOptions() {
+  const slabs = await prisma.chromiaSlab.findMany({
+    where: ON_THE_BOARD,
+    select: {
+      slabNo: true,
+      batch: { select: { batchNo: true } },
+      baseMaterial: { select: { name: true } },
+      plannedDesign: { select: { name: true, fileName: true } },
+    },
+  });
+  const sorted = (values: (string | null | undefined)[]) =>
+    [...new Set(values.filter((v): v is string => Boolean(v && v.trim())))].sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+  return {
+    batchNos: sorted(slabs.map((s) => s.batch.batchNo)),
+    slabNos: sorted(slabs.map((s) => s.slabNo)),
+    baseMaterials: sorted(slabs.map((s) => s.baseMaterial.name)),
+    fileNames: sorted(slabs.map((s) => s.plannedDesign?.fileName ?? s.plannedDesign?.name)),
+  };
+}
+
+/** Every trip of one slab, oldest first, each with the reason it went with — the unified form. */
+export async function loadSlabTrips(slabId: string) {
+  return prisma.chromiaRecalibrationCycle.findMany({
+    where: { slabId },
+    orderBy: { attemptNumber: 'asc' },
+    select: {
+      attemptNumber: true,
+      sentDate: true,
+      receivedDate: true,
+      restartedAt: true,
+      reason: { select: { name: true } },
+    },
+  });
 }

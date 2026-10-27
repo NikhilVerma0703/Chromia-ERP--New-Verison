@@ -2,30 +2,26 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { EmptyState, PageHeader } from '@/components/chromia/ui';
-import { SimpleFilterBar } from '@/components/chromia/filter-bar-simple';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
-import { DispositionBadge, GradeBadge, StatusBadge } from '@/components/chromia/ui/status';
+import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import {
-  actionFor,
-  attemptsUsed,
-  daysOut,
-  formatDaysOut,
-  stageOf,
-  statusLabel,
-} from '@/lib/chromia/recalibration-flow';
-import {
-  buildSimpleQuery,
-  hasSimpleFilters,
-  parseSimpleFilters,
-  productionDateRange,
-  type RawSearchParams,
-} from '@/lib/chromia/simple-filters';
-import { link } from '@/lib/chromia/ui';
 import { parsePage, RECALIBRATION_PAGE_SIZE } from '@/lib/chromia/list-limits';
-import { searchRecalibrationPage } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
+import {
+  BOARD_VIEW_LABELS,
+  BOARD_VIEWS,
+  buildBoardQuery,
+  hasBoardFilters,
+  parseBoardFilters,
+  type BoardView,
+} from '@/lib/chromia/recalibration-board';
+import { ordinal, stageOf, statusLabel } from '@/lib/chromia/recalibration-flow';
+import type { RawSearchParams } from '@/lib/chromia/simple-filters';
+import { manualRemark } from '@/lib/chromia/slab-remarks';
+import { boardFilterOptions, loadRecalibrationBoard } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
 import { requirePageUser } from '@/lib/pageUser';
+
+import { RecalibrationFindASlab } from './find-a-slab';
 
 export const metadata: Metadata = { title: 'Recalibration' };
 export const dynamic = 'force-dynamic';
@@ -35,15 +31,8 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
   month: 'short',
   year: 'numeric', timeZone: PLANT_TIME_ZONE, });
 
-const dateTimeFmt = new Intl.DateTimeFormat('en-GB', {
-  day: '2-digit',
-  month: 'short',
-  hour: '2-digit',
-  minute: '2-digit', timeZone: PLANT_TIME_ZONE, });
-
 const { th, td, tdMuted, tdNum } = dataTable;
 
-/** The Status column carries the whole story, so it is coloured by stage. */
 const STAGE_CLASS: Record<string, string> = {
   AWAITING_SEND: 'text-status-recalibration font-semibold',
   OUT: 'text-status-hold font-semibold',
@@ -53,108 +42,119 @@ const STAGE_CLASS: Record<string, string> = {
   WRITTEN_OFF: 'text-status-waste font-semibold',
 };
 
+const CARD_TONE: Record<BoardView, string> = {
+  ready: 'bg-status-recalibration',
+  sent: 'bg-status-hold',
+  received: 'bg-status-active',
+  pending: 'bg-status-waste',
+};
+
 /**
- * Recalibration.
+ * Recalibration (rebuilt 27 Oct 2026) — every slab QC sent to recalibration
+ * (Grade C → Recalibration), with every trip it has made.
  *
- * Every slab QC has condemned, and every slab that has ever been away. The
- * first eleven columns are the Slabs history, unchanged, so the in-charge is
- * reading the same row they already know; the last five are the recalibration
- * story the history cannot tell — how many trips this slab has actually made,
- * when it went, when it came back, what it is waiting for, and how long it has
- * been waiting.
+ * EXACTLY THREE SECTIONS, IN THIS ORDER:
  *
- * Attempt is the number of times the slab has physically left the plant. It
- * does not move when QC condemns a slab, because at that moment nothing has
- * happened to it yet: it is put down inside the plant and may sit there for a
- * month. The Status column is what changes then — "Need 2nd Time
- * Recalibration" against an Attempt of 1 is a slab that has been out once,
- * failed again, and is waiting for the next load to go out.
+ *   Dashboard            Ready for Recalibration (slabs) · Sent · Received ·
+ *                        Pending = Sent − Received (trips) — every card a link
+ *                        that turns the table to its own slabs or trips
+ *                        (lib/chromia/recalibration-board.ts says how it counts);
+ *   Find a Slab          Production Date, Batch, Slab, Material, Design;
+ *   Recalibration Records  the fourteen columns, a page at a time (CHR-10).
  *
- * Tapping the slab number opens whatever that slab needs next.
+ * The Slab No. is bold and highlighted: it is what the in-charge clicks, over
+ * and over, to open the slab's one form — Send and Receive, Update Slab
+ * Details, QC Report — at /chromia/recalibrations/<slab>.
+ *
+ * Current Status is statusLabel, derived from the saved trips and QC result.
  */
-export default async function RecalibrationsPage({
-  searchParams,
-}: {
-  searchParams: Promise<RawSearchParams>;
-}) {
-  // Signed in, or no further, on every visit: the module layout's gate is
-  // not run again when the browser moves between this module's pages
-  // (requirePageUser in lib/pageUser.ts says why).
+export default async function RecalibrationsPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   await requirePageUser();
   const params = await searchParams;
-  const filters = parseSimpleFilters(params);
-  const filtered = hasSimpleFilters(filters);
+  const filters = parseBoardFilters(params);
+  const filtered = hasBoardFilters(filters);
 
-  // The same three filters Stockyard takes, mapped onto the existing
-  // recalibration search: the single production date becomes that whole day's
-  // range, which is the shape the search already speaks. With nothing set it
-  // matches every record, exactly as the unfiltered list did.
-  //
-  // A hundred rows to a page (the code review of 20 Oct 2026, CHR-10): the list
-  // loaded every slab that had ever had a trip. The counts in the header still
-  // cover every match — they are read from the states of all of them.
-  const { from, to } = productionDateRange(filters);
-  const result = await searchRecalibrationPage(
-    {
-      batchNo: filters.batchNo,
-      slabNo: filters.slabNo,
-      baseMaterialId: null,
-      designId: null,
-      receivedFrom: from,
-      receivedTo: to,
-    },
-    { page: parsePage(params.page), pageSize: RECALIBRATION_PAGE_SIZE },
-  );
-  const { records, total } = result;
-  const now = new Date();
+  const [board, options] = await Promise.all([
+    loadRecalibrationBoard(filters, { page: parsePage(params.page), pageSize: RECALIBRATION_PAGE_SIZE }),
+    boardFilterOptions(),
+  ]);
+  const { kpis, rows } = board;
 
-  const waiting = result.states.filter((current) => stageOf(current) === 'AWAITING_SEND').length;
-  const away = result.states.filter((current) => stageOf(current) === 'OUT').length;
-  const pageHref = (page: number) => {
-    const query = buildSimpleQuery(filters);
-    return `${APP_ROUTES.recalibrations}?${query ? `${query}&` : ''}page=${page}`;
-  };
+  const cardHref = (view: BoardView) =>
+    `${APP_ROUTES.recalibrations}?${buildBoardQuery(filters, { view: filters.view === view ? '' : view })}`;
+  const pageHref = (page: number) => `${APP_ROUTES.recalibrations}?${buildBoardQuery(filters, { page: String(page) })}`;
+  const shown = filters.view ? BOARD_VIEW_LABELS[filters.view] : 'All recalibration slabs';
 
   return (
     <>
       <PageHeader
         title="Recalibration"
-        description={
-          total === 0
-            ? filtered
-              ? 'No recalibration record matches these filters.'
-              : 'No slab has been sent for recalibration.'
-            : `${waiting} waiting in the plant · ${away} out${filtered ? ' · filtered' : ''}`
-        }
+        description={`${kpis.ready} ready to send · ${kpis.pending} out at recalibration`}
       />
 
-      <SimpleFilterBar filters={filters} action={APP_ROUTES.recalibrations} />
+      {/* ------------------------------------------------------ Dashboard --- */}
+      <div className="mb-6">
+        <SectionCard title="Dashboard" accent="brand" padded>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {BOARD_VIEWS.map((view) => {
+              const active = filters.view === view;
+              return (
+                <Link
+                  key={view}
+                  href={cardHref(view)}
+                  aria-current={active ? 'true' : undefined}
+                  data-kpi={view}
+                  title={active ? 'Showing these — click again to show every slab' : `Show ${BOARD_VIEW_LABELS[view].toLowerCase()} in the table`}
+                  className={`surface block h-full rounded-xl border p-5 shadow-[0_1px_3px_rgba(16,24,40,0.06)] transition-colors hover:border-brand-400 ${
+                    active ? 'border-brand-600 ring-brand-600 ring-2' : 'border-line'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-[6px] inline-block size-1.5 shrink-0 rounded-full ${CARD_TONE[view]}`} />
+                    <span className="text-muted text-[11px] leading-[1.35] font-semibold tracking-[0.1em] uppercase">{BOARD_VIEW_LABELS[view]}</span>
+                  </div>
+                  <p className="mt-3 text-[30px] leading-none font-semibold tracking-tight tabular-nums">{kpis[view]}</p>
+                  <p className="text-muted mt-2 text-xs">
+                    {view === 'ready' ? 'slabs not yet sent' : view === 'pending' ? 'trips sent, not yet back (Sent − Received)' : 'trips'}
+                    {active ? ' · shown below' : ''}
+                  </p>
+                </Link>
+              );
+            })}
+          </div>
+        </SectionCard>
+      </div>
 
+      {/* ---------------------------------------------------- Find a Slab --- */}
+      <div className="mb-6">
+        <RecalibrationFindASlab
+          key={buildBoardQuery(filters)}
+          options={options}
+          values={{
+            productionDate: filters.productionDate,
+            batchNo: filters.batchNo,
+            slabNo: filters.slabNo,
+            baseMaterial: filters.baseMaterial,
+            fileName: filters.fileName,
+            view: filters.view ?? '',
+          }}
+        />
+      </div>
+
+      {/* ------------------------------------------ Recalibration Records --- */}
       <SectionCard
-        title="Recalibration records"
+        title="Recalibration Records"
         accent="grade"
-        padded={records.length === 0}
+        padded={rows.length === 0}
         actions={
           <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
-            {result.pages > 1 ? (
-              <>
-                <span className="text-foreground font-semibold tabular-nums">
-                  {result.from}–{result.to}
-                </span>{' '}
-                of{' '}
-              </>
-            ) : null}
-            <span className="text-foreground font-semibold tabular-nums">{total}</span>{' '}
-            {total === 1 ? 'slab' : 'slabs'}
+            {shown}: <span className="text-foreground font-semibold tabular-nums">{board.total}</span>
+            {filtered ? ' · filtered' : ''}
           </span>
         }
       >
-        {records.length === 0 ? (
-          <EmptyState>
-            {filtered
-              ? 'No recalibration record matches these filters.'
-              : 'Slabs graded C and marked for recalibration at QC appear here automatically.'}
-          </EmptyState>
+        {rows.length === 0 ? (
+          <EmptyState>{filtered || filters.view ? 'No slab matches.' : 'No slab has been sent to recalibration yet.'}</EmptyState>
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -167,97 +167,51 @@ export default async function RecalibrationsPage({
                     <th className={th}>Base Material / Slab Name</th>
                     <th className={th}>File Name / Planned Design</th>
                     <th className={`${th} text-right`}>Thickness (cm)</th>
-                    <th className={th}>In-time</th>
-                    <th className={th}>Status</th>
-                    <th className={th}>Outcome</th>
                     <th className={th}>Grade</th>
-                    <th className={th}>Reason</th>
+                    <th className={th}>Slab Outcome</th>
+                    <th className={th}>Reason for Recalibration</th>
                     <th className={th}>Slab Remarks</th>
-                    <th className={`${th} text-right`}>Attempt</th>
+                    <th className={`${th} text-right`}>Attempt Number</th>
                     <th className={th}>Sent Date</th>
                     <th className={th}>Received Date</th>
-                    <th className={th}>Status</th>
-                    <th className={th}>Days out</th>
+                    <th className={th}>Current Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {records.map((record) => {
-                    const current = state(record);
-                    const stage = stageOf(current);
-                    const action = actionFor(current);
-                    const ageing = daysOut(current, record.condemnedAt, now);
-
-                    return (
-                      <tr key={record.id} className={dataTable.row}>
-                        <td className={`${td} font-medium whitespace-nowrap`}>
-                          {dateFmt.format(record.receivedDate)}
-                        </td>
-                        <td className={`${tdMuted} font-mono`}>{record.batch.batchNo}</td>
-                        <td className={td}>
-                          {action === 'NONE' ? (
-                            <span className="font-mono">{record.slabNo}</span>
-                          ) : (
-                            <Link
-                              href={`${APP_ROUTES.recalibrations}/${record.id}`}
-                              className={`${link} font-mono`}
-                            >
-                              {record.slabNo}
-                            </Link>
-                          )}
-                        </td>
-                        <td className={td}>{record.baseMaterial.name}</td>
-                        <td className={tdMuted}>
-                          {record.plannedDesign?.fileName ?? record.plannedDesign?.name ?? '—'}
-                        </td>
-                        <td className={`${tdNum} text-right`}>
-                          {record.thicknessCm === null ? '—' : record.thicknessCm}
-                        </td>
-                        <td className={`${tdMuted} whitespace-nowrap`}>
-                          {record.inTime ? dateTimeFmt.format(record.inTime) : '—'}
-                        </td>
-                        <td className={td}>
-                          <StatusBadge status={record.status} disposition={record.currentDisposition} />
-                        </td>
-                        <td className={td}>
-                          <DispositionBadge disposition={record.currentDisposition} />
-                        </td>
-                        <td className={td}>
-                          <GradeBadge grade={record.currentGrade} />
-                        </td>
-                        <td className={td}>{record.reason ?? '—'}</td>
-                        <td className={`${tdMuted} max-w-[16rem] truncate`} title={record.remarks ?? ''}>
-                          {record.remarks ?? '—'}
-                        </td>
-                        <td className={`${tdNum} text-right font-semibold`}>
-                          {attemptsUsed(record.trips)}
-                        </td>
-                        <td className={`${tdMuted} whitespace-nowrap`}>
-                          {record.sentDate ? dateFmt.format(record.sentDate) : '—'}
-                        </td>
-                        <td className={`${tdMuted} whitespace-nowrap`}>
-                          {record.returnedDate ? dateFmt.format(record.returnedDate) : '—'}
-                        </td>
-                        <td className={`${td} whitespace-nowrap`}>
-                          <span className={STAGE_CLASS[stage] ?? ''}>
-                            {statusLabel(current, record.currentGrade)}
-                          </span>
-                        </td>
-                        <td
-                          className={`${tdNum} whitespace-nowrap ${
-                            ageing.overdue ? 'text-status-waste font-medium' : 'text-muted'
-                          }`}
+                  {rows.map((row) => (
+                    <tr key={row.key} className={dataTable.row}>
+                      <td className={`${td} whitespace-nowrap`}>{dateFmt.format(row.receivedDate)}</td>
+                      <td className={`${tdMuted} font-mono`}>{row.batchNo}</td>
+                      <td className={td}>
+                        <Link
+                          href={`${APP_ROUTES.recalibrations}/${row.slabId}`}
+                          title="Open this slab — send, receive, update and grade it"
+                          className="bg-brand-50 text-brand-800 hover:bg-brand-100 border-brand-200 inline-flex rounded-md border px-2 py-1 font-mono text-[15px] font-bold underline-offset-4 hover:underline"
                         >
-                          {formatDaysOut(ageing)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          {row.slabNo}
+                        </Link>
+                      </td>
+                      <td className={td}>{row.baseMaterial}</td>
+                      <td className={tdMuted}>{row.designFileName ?? '—'}</td>
+                      <td className={`${tdNum} text-right`}>{row.thicknessCm === null ? '—' : row.thicknessCm}</td>
+                      <td className={td}>{row.grade ? <GradeBadge grade={row.grade as never} /> : <span className="text-muted">—</span>}</td>
+                      <td className={td}>
+                        {row.disposition ? <DispositionBadge disposition={row.disposition as never} /> : <span className="text-muted">In Processing</span>}
+                      </td>
+                      <td className={td}>{row.reason ?? <span className="text-muted">—</span>}</td>
+                      <td className={`${td} max-w-[14rem]`}>{manualRemark(row.remarks, row.disposition) ?? <span className="text-muted">—</span>}</td>
+                      <td className={`${tdNum} text-right`}>{row.attemptNumber ? ordinal(row.attemptNumber) : '—'}</td>
+                      <td className={`${tdMuted} whitespace-nowrap`}>{row.sentDate ? dateFmt.format(row.sentDate) : '—'}</td>
+                      <td className={`${tdMuted} whitespace-nowrap`}>{row.tripReceivedDate ? dateFmt.format(row.tripReceivedDate) : '—'}</td>
+                      <td className={`${td} whitespace-nowrap`}>
+                        <span className={STAGE_CLASS[stageOf(row.state)] ?? ''}>{statusLabel(row.state, row.grade)}</span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-            {result.pages > 1 ? (
-              <PageNav page={result.page} pages={result.pages} href={pageHref} />
-            ) : null}
+            {board.pages > 1 ? <PageNav page={board.page} pages={board.pages} href={pageHref} /> : null}
           </>
         )}
       </SectionCard>
@@ -289,17 +243,4 @@ function PageNav({ page, pages, href }: { page: number; pages: number; href: (pa
       </span>
     </nav>
   );
-}
-
-/** The shape the rules work on, built from one row. */
-function state(record: {
-  currentDisposition: string | null;
-  status: string;
-  trips: { attemptNumber: number; sentDate: Date | null; receivedDate: Date | null; restartedAt: Date | null }[];
-}) {
-  return {
-    disposition: record.currentDisposition,
-    writtenOff: record.status === 'WASTE',
-    trips: record.trips,
-  };
 }

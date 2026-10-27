@@ -62,7 +62,8 @@ describe('the status wording the in-charge reads', () => {
     });
 
     expect(wording).toEqual([
-      'Need 1st Time Recalibration',
+      // Never sent yet: Ready (27 Oct 2026); after that, the next ordinal.
+      'Ready for Recalibration',
       'Need 2nd Time Recalibration',
       'Need 3rd Time Recalibration',
       'Need 4th Time Recalibration',
@@ -76,17 +77,17 @@ describe('the status wording the in-charge reads', () => {
       { attemptNumber: 2, sentDate: day(8), receivedDate: null, restartedAt: null },
     ]);
     expect(stageOf(state)).toBe('OUT');
-    expect(statusLabel(state)).toBe('Out for 2nd Time Recalibration');
+    expect(statusLabel(state)).toBe('Sent for 2nd Time Recalibration');
   });
 
-  it('asks for a restart once the slab is back', () => {
+  it('says which trip it is back from, until its details are updated', () => {
     const state: SlabRecalState = {
       disposition: 'RECALIBRATION',
       writtenOff: false,
       trips: [{ attemptNumber: 1, sentDate: day(1), receivedDate: day(4), restartedAt: null }],
     };
     expect(stageOf(state)).toBe('RETURNED');
-    expect(statusLabel(state)).toBe('Returned — Restart Production');
+    expect(statusLabel(state)).toBe('Received from the 1st Time Recalibration');
   });
 
   it('shows the slab back on the line, waiting for QC', () => {
@@ -102,7 +103,13 @@ describe('the status wording the in-charge reads', () => {
       trips: [completed(1)],
     };
     expect(stageOf(state)).toBe('CLEARED');
-    expect(statusLabel(state, 'A')).toBe('Cleared — Grade A');
+    // The outcome is named too (27 Oct 2026); a slab cleared before Grade A
+    // went only to Stock still reads as what happened to it.
+    expect(statusLabel(state, 'A')).toBe('Cleared — Grade A: Dispatch');
+    expect(statusLabel({ ...state, disposition: 'STOCK' }, 'A')).toBe('Cleared — Grade A: Stock');
+    expect(statusLabel({ ...state, disposition: 'STOCK' }, 'B')).toBe('Cleared — Grade B: Stock');
+    expect(statusLabel({ ...state, disposition: 'SAMPLE_CUTTING' }, 'B')).toBe('Cleared — Grade B: Sample Cutting');
+    expect(statusLabel(state)).toBe('Cleared');
   });
 
   it('writes the slab off after the fifth trip fails', () => {

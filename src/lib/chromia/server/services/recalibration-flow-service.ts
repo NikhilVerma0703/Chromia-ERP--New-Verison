@@ -448,3 +448,21 @@ export async function restartProduction(input: RestartAfterRecalibrationInput, u
 
   return { attemptNumber: trip.attemptNumber };
 }
+
+/**
+ * Change only the Reason for Recalibration of the trip a slab is on — the
+ * one waiting to be sent, or the one out (27 Oct 2026, the unified form's QC
+ * Report). A trip already back keeps the reason it went with. The reason is
+ * the record's, never the slab's remark.
+ */
+export async function setTripReason(slabId: string, reasonId: string | null, userId: string) {
+  const slab = await loadSlab(slabId);
+  const trip =
+    slab.recalibrations.find((t) => t.sentDate !== null && t.receivedDate === null) ??
+    slab.recalibrations.find((t) => t.sentDate === null);
+  if (!trip) {
+    throw new BusinessRuleViolationError(`Slab ${slab.slabNo} has no recalibration trip waiting or out to give a reason to`);
+  }
+  await prisma.chromiaRecalibrationCycle.update({ where: { id: trip.id }, data: { reasonId } });
+  log.info({ slabNo: slab.slabNo, attempt: trip.attemptNumber, userId }, 'Recalibration reason changed');
+}

@@ -88,12 +88,28 @@ export function ordinal(n: number): string {
   return ORDINALS[n - 1] ?? `${n}th`;
 }
 
+/** How a cleared slab's outcome reads in its status. */
+const CLEARED_OUTCOME: Record<string, string> = {
+  STOCK: 'Stock',
+  SAMPLE_CUTTING: 'Sample Cutting',
+  DISPATCH: 'Dispatch',
+};
+
 /**
- * The Status column.
+ * The Current Status column — derived from the saved trips and the slab's QC
+ * result, never stored (extended 27 Oct 2026; same stages, clearer words):
  *
- * "Need 2nd Time Recalibration" on a slab whose Attempt still reads 1 is the
- * sentence the in-charge is looking for: it has been out once, it has failed
- * again, and it is waiting for the next load to go.
+ *   Ready for Recalibration                     graded C → Recalibration, never sent
+ *   Need 2nd Time Recalibration                 condemned again after attempt 1, not yet sent
+ *   Sent for 1st Time Recalibration             attempt 1 sent, not received
+ *   Received from the 1st Time Recalibration    attempt 1 received, details not yet updated
+ *   In Processing — After Attempt 1             details updated, waiting for QC
+ *   Cleared — Grade A: Stock                    QC passed it (B: Stock / B: Sample Cutting …)
+ *   Written Off / Waste                         every attempt used and condemned again
+ *
+ * The ordinal is the attempt's own number, so each pass reads 2nd, 3rd … in
+ * turn. "Need 2nd Time Recalibration" on a slab whose Attempt still reads 1 is
+ * the sentence the in-charge is looking for: out once, failed again, waiting.
  */
 export function statusLabel(state: SlabRecalState, grade?: string | null): string {
   const stage = stageOf(state);
@@ -103,16 +119,19 @@ export function statusLabel(state: SlabRecalState, grade?: string | null): strin
     case 'WRITTEN_OFF':
       return 'Written Off / Waste';
     case 'OUT':
-      return `Out for ${ordinal(openTrip(state.trips)?.attemptNumber ?? used)} Time Recalibration`;
+      return `Sent for ${ordinal(openTrip(state.trips)?.attemptNumber ?? used)} Time Recalibration`;
     case 'RETURNED':
-      return `Returned — Restart Production`;
+      return `Received from the ${ordinal(latestTrip(state.trips)?.attemptNumber ?? used)} Time Recalibration`;
     case 'IN_PRODUCTION':
       return `In Processing — After Attempt ${used}`;
-    case 'CLEARED':
+    case 'CLEARED': {
+      const outcome = state.disposition ? CLEARED_OUTCOME[state.disposition] : undefined;
+      if (grade && outcome) return `Cleared — Grade ${grade}: ${outcome}`;
       return `Cleared${grade ? ` — Grade ${grade}` : ''}`;
+    }
     case 'AWAITING_SEND':
     default:
-      return `Need ${ordinal(used + 1)} Time Recalibration`;
+      return used === 0 ? 'Ready for Recalibration' : `Need ${ordinal(used + 1)} Time Recalibration`;
   }
 }
 
