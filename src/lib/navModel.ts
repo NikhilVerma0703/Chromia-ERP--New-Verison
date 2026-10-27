@@ -42,6 +42,8 @@ export const NAV_ICON = {
   layers:      "M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5M3 17l9 5 9-5",
   // A ledger: the receivables register (Accounts; Payment Tracking's row).
   ledger:      "M4 19.5A2.5 2.5 0 016.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z",
+  // A tick in a circle: Approved Slabs (27 Oct 2026).
+  approved:    "M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3",
 };
 const I = NAV_ICON;
 
@@ -86,6 +88,8 @@ export const CHROMIA_ITEMS: NavItem[] = [
   // the slabs QC marked for dispatch had no way in but the tablet swipe.
   // tests/chromiaNavParity.test.ts now holds the two lists together.
   { href: "/chromia/dispatch",               icon: I.packaging, label: "Dispatched" },
+  // Directly below Dispatched (27 Oct 2026): slabs approved in the Stockyard.
+  { href: "/chromia/approved",               icon: I.approved, label: "Approved Slabs" },
   { href: "/chromia/recalibrations",         icon: I.spanner,  label: "Recalibration" },
   { href: "/chromia/recalibration-tracking", icon: I.live,     label: "Recal. Tracking" },
   { href: "/chromia/reports",                icon: I.ceo,      label: "Summary" },
@@ -102,7 +106,7 @@ const sections = (...blocks: NavBlock[][]): NavModel => ({ kind: "sections", blo
  *  people; the local user is one). */
 export function chromiaNav(): NavModel {
   return sections(
-    section("Production", CHROMIA_ITEMS.filter((t) => ["/chromia/dashboard", "/chromia/operator", "/chromia/slabs", "/chromia/stockyard", "/chromia/dispatch"].includes(t.href))),
+    section("Production", CHROMIA_ITEMS.filter((t) => ["/chromia/dashboard", "/chromia/operator", "/chromia/slabs", "/chromia/stockyard", "/chromia/dispatch", "/chromia/approved"].includes(t.href))),
     section("Recalibration", CHROMIA_ITEMS.filter((t) => t.href.startsWith("/chromia/recalibration"))),
     section("Reports", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/reports" || t.href === "/chromia/downloads")),
     section("Setup", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/import")),

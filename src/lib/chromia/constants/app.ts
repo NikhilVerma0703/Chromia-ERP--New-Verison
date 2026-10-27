@@ -21,6 +21,8 @@ export const APP_ROUTES = {
   slabIntake: '/chromia/operator',
   stockyard: '/chromia/stockyard',
   dispatch: '/chromia/dispatch',
+  /** Approved Slabs — slabs sent from the Stockyard as Approved (27 Oct 2026). */
+  approved: '/chromia/approved',
   recalibrations: '/chromia/recalibrations',
   recalibrationTracking: '/chromia/recalibration-tracking',
   import: '/chromia/import',
@@ -33,6 +35,8 @@ export const APP_ROUTES = {
 
 export const API_ROUTES = {
   exports: '/api/chromia/exports',
+  /** One saved slab photo: `${slabPhoto}/<photo id>`. */
+  slabPhoto: '/api/chromia/slab-photo',
 } as const;
 
 export const PAGINATION = {
