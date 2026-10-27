@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { addPlantDays } from '@/lib/chromia/plant-time';
+import { stockedOnDay } from '@/lib/chromia/constants/stock-outcomes';
 import { STOCK_OUTCOMES, stockOutcomeSchema, stockyardToday } from '@/lib/chromia/validation/stockyard';
 
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -61,6 +62,25 @@ describe('Stockyard → Stock Outcome (27 Oct 2026)', () => {
     const form = read('src/app/chromia/stockyard/stock-outcome-form.tsx');
     expect(form).toMatch(/type="date"\n\s+required\n\s+max=\{today\}/);
     expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/const today = stockyardToday\(now\);/);
+  });
+
+  it('dates the stocking on the plant calendar, the earliest day a Stock Outcome may carry', () => {
+    // Stocked at 20:00 UTC on the 26th — 01:30 on the 27th in IST.
+    expect(stockedOnDay(new Date('2026-10-26T20:00:00Z'))).toBe('2026-10-27');
+    expect(stockedOnDay(new Date('2026-10-26T18:00:00Z'))).toBe('2026-10-26');
+    expect(stockedOnDay(null)).toBeNull();
+  });
+
+  it('refuses a date before the slab was stocked, on the server and in the picker', () => {
+    const service = read('src/lib/chromia/server/services/stockyard-service.ts');
+    const send = service.slice(service.indexOf('export async function sendFromStock('));
+    expect(send).toMatch(/stockEntries: \{ where: \{ releasedAt: null \}/);
+    expect(send).toMatch(/if \(stockedOn && sentOn < stockedOn\) \{/);
+    // Checked before any outcome is written.
+    expect(send.indexOf('sentOn < stockedOn')).toBeLessThan(send.indexOf('switch (input.outcome)'));
+    const form = read('src/app/chromia/stockyard/stock-outcome-form.tsx');
+    expect(form).toMatch(/max=\{today\}\n\s+min=\{stockedOn \?\? undefined\}/);
+    expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/stockedOn=\{stockedOnDay\(slab\.stockDate\)\}/);
   });
 
   it('takes the slab off the rack for every outcome, claiming it, and keeps its history', () => {

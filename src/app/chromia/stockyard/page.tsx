@@ -12,7 +12,7 @@ import {
 } from '@/lib/chromia/simple-filters';
 import { daysBetween } from '@/lib/chromia/utils/dates';
 import { manualRemark } from '@/lib/chromia/slab-remarks';
-import { stockyardToday } from '@/lib/chromia/constants/stock-outcomes';
+import { stockedOnDay, stockyardToday } from '@/lib/chromia/constants/stock-outcomes';
 import { listStockedSlabs, listStockReleases } from '@/lib/chromia/server/repositories/stockyard-repository';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { requirePageUser } from '@/lib/pageUser';
@@ -153,7 +153,12 @@ export default async function StockyardPage({
                         {slab.stockDate === null ? '—' : daysBetween(slab.stockDate, now)}
                       </td>
                       <td className={`${td} text-right`}>
-                        <StockOutcomeForm slabId={slab.id} slabNo={slab.slabNo} today={today} />
+                        <StockOutcomeForm
+                          slabId={slab.id}
+                          slabNo={slab.slabNo}
+                          today={today}
+                          stockedOn={stockedOnDay(slab.stockDate)}
+                        />
                       </td>
                     </tr>
                   ))}

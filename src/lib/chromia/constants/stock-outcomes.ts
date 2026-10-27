@@ -18,3 +18,12 @@ export const STOCK_OUTCOME_LABELS: Record<StockOutcomeValue, string> = {
 export function stockyardToday(now: Date = new Date()): string {
   return toPlantDateInput(now);
 }
+
+/**
+ * The plant day (IST, `yyyy-mm-dd`) a slab went into stock — the EARLIEST
+ * date its Stock Outcome may carry: a slab cannot leave the rack before it was
+ * put there. Null when the slab has no open stock entry to date it by.
+ */
+export function stockedOnDay(stockDate: Date | null | undefined): string | null {
+  return stockDate ? toPlantDateInput(stockDate) : null;
+}

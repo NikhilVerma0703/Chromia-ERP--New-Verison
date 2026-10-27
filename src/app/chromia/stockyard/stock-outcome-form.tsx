@@ -17,8 +17,23 @@ const INITIAL_STATE: StockyardFormState = {};
  * server — so 28 October cannot be picked on the 27th; the action refuses a
  * future date again for any request that did not come through the picker.
  * Once sent, the slab is no longer IN_STOCK and the page drops its row.
+ *
+ * The calendar also starts at `stockedOn`, the plant day the slab went into
+ * stock: it cannot leave the rack before it was put there. The action refuses
+ * an earlier date too.
  */
-export function StockOutcomeForm({ slabId, slabNo, today }: { slabId: string; slabNo: string; today: string }) {
+export function StockOutcomeForm({
+  slabId,
+  slabNo,
+  today,
+  stockedOn,
+}: {
+  slabId: string;
+  slabNo: string;
+  today: string;
+  /** `yyyy-mm-dd` (IST) the slab was stocked, or null when unknown. */
+  stockedOn: string | null;
+}) {
   const [state, formAction, isPending] = useActionState(sendFromStockAction, INITIAL_STATE);
 
   return (
@@ -46,6 +61,7 @@ export function StockOutcomeForm({ slabId, slabNo, today }: { slabId: string; sl
         type="date"
         required
         max={today}
+        min={stockedOn ?? undefined}
         defaultValue={today}
         className={`${field} w-[10.5rem]`}
       />

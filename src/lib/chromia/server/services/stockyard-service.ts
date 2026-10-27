@@ -1,7 +1,9 @@
 import { ChromiaDisposition as Disposition, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
 import { BusinessRuleViolationError, NotFoundError } from '@/lib/chromia/errors';
+import { stockedOnDay } from '@/lib/chromia/constants/stock-outcomes';
 import { createLogger } from '@/lib/chromia/logger';
+import { formatPlantDay, toPlantDateInput } from '@/lib/chromia/plant-time';
 import { isWriteOff, MAX_ATTEMPTS } from '@/lib/chromia/recalibration-flow';
 import type { StockOutcomeInput, StockReleaseInput } from '@/lib/chromia/validation/stockyard';
 import { claimSlab, recordDispatch, recordSampleCutting } from '@/lib/chromia/server/services/disposition-service';
@@ -188,13 +190,30 @@ export async function sendStockToRecalibration(input: { slabId: string }, userId
 export async function sendFromStock(input: StockOutcomeInput, userId: string) {
   const slab = await prisma.chromiaSlab.findFirst({
     where: { id: input.slabId, deletedAt: null },
-    select: { id: true, slabNo: true, status: true, currentDisposition: true },
+    select: {
+      id: true,
+      slabNo: true,
+      status: true,
+      currentDisposition: true,
+      stockEntries: { where: { releasedAt: null }, orderBy: { stockDate: 'desc' }, take: 1, select: { stockDate: true } },
+    },
   });
 
   if (!slab) throw new NotFoundError('Slab');
 
   if (slab.status !== SlabStatus.IN_STOCK) {
     throw new BusinessRuleViolationError(`Slab ${slab.slabNo} is not in stock any more, so it cannot be sent from the stockyard`);
+  }
+
+  // NOT BEFORE IT WAS STOCKED (27 Oct 2026). A slab cannot leave the rack
+  // before the day it was put there; both sides are plant days (IST), the
+  // same calendar the row's date picker is bounded by.
+  const stockedOn = stockedOnDay(slab.stockEntries[0]?.stockDate);
+  const sentOn = toPlantDateInput(input.date);
+  if (stockedOn && sentOn < stockedOn) {
+    throw new BusinessRuleViolationError(
+      `The date cannot be before slab ${slab.slabNo} was stocked (${formatPlantDay(stockedOn)})`,
+    );
   }
 
   switch (input.outcome) {
