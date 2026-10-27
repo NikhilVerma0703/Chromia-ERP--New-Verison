@@ -106,8 +106,10 @@ test("the Edit screen asks the same rule, so it never offers a QC section the sa
   const page = read("src/app/chromia/operator/page.tsx");
   assert.match(page, /import \{ qcCorrectionRefusal \} from '@\/lib\/chromia\/qc-correction';/);
   assert.match(page, /decidedDisposition: selected\.decidedDisposition,\n\s+hasDispatch: selected\.hasDispatch,/);
-  assert.match(page, /correctionRefusal\?\.reason === 'IN_RECALIBRATION' \?/);
-  assert.match(page, /\) : correctionRefusal \? \(\n\s+<SectionCard title="QC Section — correct" accent="grade" padded>\n\s+<EmptyState>\{correctionRefusal\.message\}<\/EmptyState>/);
+  assert.match(page, /correctionRefusal\?\.reason === 'IN_RECALIBRATION'\s+\?/);
+  // The QC Report is part of the entry form now (27 Oct 2026): a refused
+  // correction settles it as 'none' and shows the refusal's own sentence.
+  assert.match(page, /: correctionRefusal\n\s+\? \{ mode: 'none', recalibrationReasons, message: correctionRefusal\.message \}/);
   assert.doesNotMatch(page, /const inRecalibration =/, "one rule, not a second copy of part of it");
   const repo = read("src/lib/chromia/server/repositories/slab-record-repository.ts");
   assert.match(repo, /decidedDisposition: cycle\?\.disposition \?\? null,\n\s+hasDispatch: slab\.dispatches\.length > 0,/);

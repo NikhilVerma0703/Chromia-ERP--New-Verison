@@ -132,9 +132,22 @@ export const SLAB_STATUS_LABELS: Record<SlabStatusType, string> = {
   ON_HOLD: 'On Hold',
 };
 
-/** Dispositions allowed for each grade. See CHROMIA_PROCESS.md section 6. */
+/**
+ * Dispositions allowed for each grade. See CHROMIA_PROCESS.md section 6.
+ *
+ * GRADE A GOES TO STOCK, AND ONLY TO STOCK (the owner's change of 27 Oct
+ * 2026). A Grade A slab used to be sent either to Dispatch or to Stock at QC;
+ * now QC always stocks it, and it leaves the plant from the Stockyard, whose
+ * Dispatch button is the one way out. This table is what applyIntakeGrade
+ * refuses against, so the rule holds on every screen that grades — Slab
+ * Entry, its QC correction, and the re-grade after recalibration.
+ *
+ * A grade with a single outcome (A, C) needs no choice: the QC Report sets
+ * the outcome itself. Slabs already graded A → Dispatch before the change,
+ * and registers imported with a Dispatch remark, keep what they were given.
+ */
 export const GRADE_ALLOWED_DISPOSITIONS: Record<SlabGradeType, readonly DispositionType[]> = {
-  A: [Disposition.DISPATCH, Disposition.STOCK],
+  A: [Disposition.STOCK],
   B: [Disposition.STOCK, Disposition.SAMPLE_CUTTING],
   // Waste is not an outcome this line records: a failed slab goes back out for
   // recalibration, and only the fifth failure ends its life — that write-off is

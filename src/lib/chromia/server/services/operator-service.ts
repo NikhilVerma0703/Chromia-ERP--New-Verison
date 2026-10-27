@@ -1,4 +1,4 @@
-import type { ChromiaDisposition as Disposition } from '@prisma/client';
+import type { ChromiaDisposition as Disposition, ChromiaSlabGrade as SlabGrade } from '@prisma/client';
 import { ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
 import { ConflictError, ValidationError } from '@/lib/chromia/errors';
@@ -8,13 +8,15 @@ import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
 import type { OperatorEntryInput } from '@/lib/chromia/validation/operator';
 import { resolveBaseMaterialId, resolveDesignId } from '@/lib/chromia/server/services/reference-service';
 import { markSlabsChromia } from '@/lib/chromia/inventory-bridge';
+import { needsIntakeQc } from '@/lib/chromia/slab-links';
 
 const log = createLogger('operator');
 
 export interface RegisterRow {
   id: string;
-  /** Its number within its OWN production date — what the paper book says. */
-  serialNo: number;
+  /** Its number within its OWN production date — what the paper book says.
+   *  Stored, and numbered by the database (entry_serial_no, migration 0002). */
+  serialNo: number | null;
   receivedDate: Date;
   slabNo: string;
   batchNo: string;
@@ -27,7 +29,12 @@ export interface RegisterRow {
   enteredAt: Date;
   /** Where the slab has got to since it was booked on, and what became of it. */
   status: SlabStatus;
+  currentGrade: SlabGrade | null;
   currentDisposition: Disposition | null;
+  /** The grader's own remark — never the outcome (see QcSection). */
+  remarks: string | null;
+  /** No QC Report yet: the table says In-Processing and marks the slab number. */
+  pendingQc: boolean;
 }
 
 /**
@@ -103,6 +110,9 @@ export async function recordOperatorEntry(input: OperatorEntryInput, userId: str
         status: SlabStatus.IN_PROCESS,
         currentCycleNumber: 1,
         receivedDate,
+        remarks: input.remarks ?? null,
+        // entrySerialNo is not set here: the database numbers the row (the
+        // chromia_slab_entry_serial trigger, migration 0002).
         createdById: userId,
         updatedById: userId,
       },
@@ -162,9 +172,12 @@ const slabSelect = {
   slabNo: true,
   receivedDate: true,
   createdAt: true,
+  entrySerialNo: true,
   currentThicknessMm: true,
   status: true,
+  currentGrade: true,
   currentDisposition: true,
+  remarks: true,
   batch: { select: { batchNo: true } },
   baseMaterial: { select: { name: true } },
   plannedDesign: { select: { fileName: true } },
@@ -197,9 +210,10 @@ const slabSelect = {
  *
  * S. No. means what the paper book means by it — the entry's number within its
  * own production date — so the numbers match the register even though the rows
- * are from several days. It counts against every slab on those dates, not just
- * the twenty on screen, or the first row of a day already half-entered would be
- * numbered 1.
+ * are from several days. It used to be COUNTED here on every render (the slabs
+ * entered before each row on its date); it is STORED now, numbered by the
+ * database as the row is written (entry_serial_no, migration 0002), so a
+ * refresh, a historical entry or a deleted neighbour never changes it.
  *
  * Ordering within a day is by when the row was entered. The old per-day list
  * ordered by in-time and fell back to that; with the in-time optional there is
@@ -215,47 +229,7 @@ export async function loadRecentRegister(
     select: slabSelect,
   });
 
-  if (recent.length === 0) return [];
-
-  /*
-   * The S. No. of each row, within its own production date.
-   *
-   * Counted rather than listed. The obvious version — fetch every slab on the
-   * dates these twenty span and number them — is unbounded: a register whose
-   * date column was written once and carried down (which the May sheet's own
-   * parser documents) puts a whole month on one date, and one page render
-   * would pull all of it. Instead, for each date, ONE count of the slabs
-   * entered before the oldest row shown on that date. Everything after that is
-   * arithmetic on the twenty rows already in hand.
-   */
-  const oldestShownPerDate = new Map<number, Date>();
-  for (const slab of recent) {
-    const key = slab.receivedDate.getTime();
-    const seen = oldestShownPerDate.get(key);
-    if (!seen || slab.createdAt < seen) oldestShownPerDate.set(key, slab.createdAt);
-  }
-
-  const offsets = new Map<number, number>();
-  await Promise.all(
-    [...oldestShownPerDate.entries()].map(async ([time, oldest]) => {
-      const before = await prisma.chromiaSlab.count({
-        where: { deletedAt: null, receivedDate: new Date(time), createdAt: { lt: oldest } },
-      });
-      offsets.set(time, before);
-    }),
-  );
-
-  // Oldest first within each date, so the numbers run the way the book does.
-  const running = new Map<number, number>();
-  const serialById = new Map<string, number>();
-  for (const slab of [...recent].reverse()) {
-    const key = slab.receivedDate.getTime();
-    const next = (running.get(key) ?? offsets.get(key) ?? 0) + 1;
-    running.set(key, next);
-    serialById.set(slab.id, next);
-  }
-
-  return recent.map((slab) => toRegisterRow(slab, serialById.get(slab.id) ?? 0));
+  return recent.map(toRegisterRow);
 }
 
 type SlabWithCycle = {
@@ -263,20 +237,23 @@ type SlabWithCycle = {
   slabNo: string;
   receivedDate: Date;
   createdAt: Date;
+  entrySerialNo: number | null;
   currentThicknessMm: unknown;
   status: SlabStatus;
+  currentGrade: SlabGrade | null;
   currentDisposition: Disposition | null;
+  remarks: string | null;
   batch: { batchNo: string };
   baseMaterial: { name: string };
   plannedDesign: { fileName: string } | null;
   cycles: { inTime: Date | null; design: { fileName: string } | null }[];
 };
 
-function toRegisterRow(slab: SlabWithCycle, serialNo: number): RegisterRow {
+function toRegisterRow(slab: SlabWithCycle): RegisterRow {
   const cycle = slab.cycles[0];
   return {
     id: slab.id,
-    serialNo,
+    serialNo: slab.entrySerialNo,
     receivedDate: slab.receivedDate,
     slabNo: slab.slabNo,
     batchNo: slab.batch.batchNo,
@@ -288,7 +265,11 @@ function toRegisterRow(slab: SlabWithCycle, serialNo: number): RegisterRow {
     inTime: cycle?.inTime ?? null,
     enteredAt: slab.createdAt,
     status: slab.status,
+    currentGrade: slab.currentGrade,
     currentDisposition: slab.currentDisposition,
+    remarks: slab.remarks,
+    // The same rule that decides whether the QC Report is still open.
+    pendingQc: needsIntakeQc(slab.status),
   };
 }
 

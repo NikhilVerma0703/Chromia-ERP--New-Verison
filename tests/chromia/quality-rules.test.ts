@@ -21,8 +21,10 @@ function dispositionAllowed(grade: SlabGrade, disposition: Disposition, attempts
 }
 
 describe('grade routing', () => {
-  it('sends Grade A only to dispatch or stock', () => {
-    expect(dispositionAllowed(SlabGrade.A, Disposition.DISPATCH, 0)).toBe(true);
+  it('sends Grade A only to stock', () => {
+    // Dispatch is no longer an outcome at QC (27 Oct 2026): a Grade A slab is
+    // stocked, and dispatched from the Stockyard.
+    expect(dispositionAllowed(SlabGrade.A, Disposition.DISPATCH, 0)).toBe(false);
     expect(dispositionAllowed(SlabGrade.A, Disposition.STOCK, 0)).toBe(true);
     expect(dispositionAllowed(SlabGrade.A, Disposition.SAMPLE_CUTTING, 0)).toBe(false);
     expect(dispositionAllowed(SlabGrade.A, Disposition.RECALIBRATION, 0)).toBe(false);

@@ -3,8 +3,9 @@ import Link from 'next/link';
 
 import { EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
-import { DispositionBadge, StatusBadge } from '@/components/chromia/ui/status';
+import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
+import { DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
 import { toDateInput, toTimeInput } from '@/lib/chromia/operator-register';
 import { qcCorrectionRefusal } from '@/lib/chromia/qc-correction';
 import { needsIntakeQc } from '@/lib/chromia/slab-links';
@@ -20,13 +21,13 @@ import {
 } from '@/lib/chromia/server/services/operator-service';
 import { requirePageUser } from '@/lib/pageUser';
 
-import { EntryForm } from './entry-form';
-import { QcPanel } from './qc-panel';
+import { EntryForm, type QcReport } from './entry-form';
 
-export const metadata: Metadata = { title: 'Operator Entry' };
+export const metadata: Metadata = { title: 'Slab Entry' };
 export const dynamic = 'force-dynamic';
 
-const timeFmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: PLANT_TIME_ZONE });
+// Plant time (IST), 24-hour — what the Entered column and the in-time show.
+const timeFmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: PLANT_TIME_ZONE });
 
 const dateFmt = new Intl.DateTimeFormat('en-GB', {
   day: '2-digit',
@@ -49,24 +50,38 @@ function resolveDay(raw: string | string[] | undefined): string {
 }
 
 /**
- * Operator entry — the shop-floor register, digitised.
+ * A remark worth a column: one somebody wrote. Until 27 Oct 2026 the QC
+ * section filled the remark with the chosen outcome ("Stock", "Dispatch"),
+ * which only repeats QC Outcome — such a remark, on a slab graded before the
+ * change, is not shown as if it had been typed.
+ */
+function manualRemark(remarks: string | null, disposition: string | null): string | null {
+  const value = remarks?.trim();
+  if (!value) return null;
+  if (disposition && value.toLowerCase() === DISPOSITION_LABELS[disposition as keyof typeof DISPOSITION_LABELS]?.toLowerCase()) {
+    return null;
+  }
+  return value;
+}
+
+/**
+ * Slab Entry (was Operator Entry; renamed 27 Oct 2026) — the shop-floor
+ * register, digitised.
  *
  * The register shows exactly what the operator entered: S.No., Production Date,
  * Batch No., Slab No., Base Material / Slab Name, File Name / Planned Design,
  * Thickness and In-time. The operator does not record individual stages — the
  * slab goes into Base Primer and comes out three to four hours later.
  *
- * ── ONE SCREEN, TWO JOBS ─────────────────────────────────────────────────
- * QC used to be a page of its own: clicking a slab number left this screen for
- * /chromia/slabs/new, which asked for a printed date nobody was there to know
- * and the quality decision. Both halves of a slab's life now happen here.
- * Opening a slab (`?slab=<id>`) fills the entry fields with what was recorded
- * and puts the QC Section underneath them, so the in-charge sees the run and
- * grades it without navigating.
+ * ── ONE FORM: NEW ENTRY → QC REPORT → SAVE ENTRY ────────────────────────────
+ * QC used to be a page of its own, then a second form under the entry with its
+ * own button. Now the QC Report is part of the entry form and one Save Entry
+ * saves both (saveSlabEntryAction). A slab saved with no grade is
+ * In-Processing: Recent Slabs Entry says so in QC Outcome and marks its slab
+ * number until its QC Report is saved. Opening a slab (`?slab=<id>`) fills the
+ * form with what was recorded, to correct it or to finish its QC Report.
  *
- * Nothing about the operator's own flow changes: saving an entry still leaves
- * the slab In-Processing, and the grade is still a separate, deliberate act
- * with its own button.
+ * The route is still /chromia/operator, so every link and bookmark holds.
  */
 export default async function OperatorPage({
   searchParams,
@@ -95,7 +110,8 @@ export default async function OperatorPage({
       loadDesignFileNames(),
       loadRecentBatchNos(),
       slabId ? loadSlabRecord(slabId) : Promise.resolve(null),
-      slabId ? listRecalibrationReasons() : Promise.resolve([]),
+      // The QC Report is on every entry now, new rows included.
+      listRecalibrationReasons(),
     ]);
 
   /* A slab that has already been graded, or is away at the recalibration
@@ -122,17 +138,65 @@ export default async function OperatorPage({
           hasDispatch: selected.hasDispatch,
         });
 
+  /* What the QC Report under the entry can do for this slab. The same three
+     answers the separate QC section gave: grade it, correct it on the Edit
+     path, or say why its QC is settled. */
+  const qc: QcReport = !selected
+    ? { mode: 'grade', recalibrationReasons }
+    : editMode
+      ? correctionRefusal?.reason === 'IN_RECALIBRATION'
+        ? {
+            mode: 'none',
+            recalibrationReasons,
+            message: (
+              <>
+                Slab {selected.slabNo} is in a recalibration cycle — correct it on the{' '}
+                <Link href={APP_ROUTES.recalibrations} className={link}>
+                  Recalibration
+                </Link>{' '}
+                page.
+              </>
+            ),
+          }
+        : correctionRefusal
+          ? { mode: 'none', recalibrationReasons, message: correctionRefusal.message }
+          : {
+              mode: 'correct',
+              recalibrationReasons,
+              initial: {
+                grade: selected.currentGrade ?? '',
+                disposition: selected.currentDisposition ?? '',
+              },
+            }
+      : qcOpen
+        ? { mode: 'grade', recalibrationReasons }
+        : {
+            mode: 'none',
+            recalibrationReasons,
+            message: (
+              <>
+                Slab {selected.slabNo} has already been graded — its outcome is on{' '}
+                <Link href={APP_ROUTES.slabs} className={link}>
+                  Slab Records
+                </Link>
+                .
+              </>
+            ),
+          };
+
   return (
     <>
       <PageHeader
         eyebrow="Shop floor"
-        title="Operator entry"
+        title="Slab entry"
         description={
           selected
             ? editMode
               ? `Slab ${selected.slabNo} — correct any field, including QC, below`
-              : `Slab ${selected.slabNo} — correct the entry, or grade it below`
-            : 'Book slabs onto the line'
+              : qcOpen
+                ? `Slab ${selected.slabNo} — correct the entry, or finish its QC Report below`
+                : `Slab ${selected.slabNo} — correct the entry below`
+            : 'Book slabs onto the line, with their QC Report'
         }
         actions={
           selected ? (
@@ -156,12 +220,14 @@ export default async function OperatorPage({
        * Keying on the slab makes each one a fresh form.
        */}
       <EntryForm
-        key={slabId ?? 'new'}
+        key={`${slabId ?? 'new'}${editMode ? ':edit' : ''}`}
         baseMaterials={baseMaterials}
         entryDate={resolveDay(params.date)}
         nowTime={toTimeInput(new Date())}
         fileNames={fileNames}
         batchNos={batchNos}
+        qc={qc}
+        back={back}
         editing={
           selected
             ? {
@@ -173,66 +239,14 @@ export default async function OperatorPage({
                 thicknessCm: selected.thicknessCm === null ? '' : String(selected.thicknessCm),
                 receivedDate: toDateInput(selected.receivedDate),
                 inTime: selected.inTime ? toTimeInput(selected.inTime) : '',
-                remarks: selected.remarks ?? '',
+                remarks: manualRemark(selected.remarks, selected.currentDisposition) ?? '',
               }
             : undefined
         }
       />
 
-      {selected ? (
-        editMode ? (
-          correctionRefusal?.reason === 'IN_RECALIBRATION' ? (
-            <SectionCard title="QC Section — correct" accent="grade" padded>
-              <EmptyState>
-                Slab {selected.slabNo} is in a recalibration cycle — correct it on the{' '}
-                <Link href={APP_ROUTES.recalibrations} className={link}>
-                  Recalibration
-                </Link>{' '}
-                page.
-              </EmptyState>
-            </SectionCard>
-          ) : correctionRefusal ? (
-            <SectionCard title="QC Section — correct" accent="grade" padded>
-              <EmptyState>{correctionRefusal.message}</EmptyState>
-            </SectionCard>
-          ) : (
-            <QcPanel
-              edit
-              key={selected.id}
-              slabId={selected.id}
-              slabNo={selected.slabNo}
-              recalibrationReasons={recalibrationReasons}
-              back={back}
-              initial={{
-                grade: selected.currentGrade ?? '',
-                disposition: selected.currentDisposition ?? '',
-                slabRemarks: selected.remarks ?? '',
-              }}
-            />
-          )
-        ) : qcOpen ? (
-          <QcPanel
-            key={selected.id}
-            slabId={selected.id}
-            slabNo={selected.slabNo}
-            recalibrationReasons={recalibrationReasons}
-            back={back}
-          />
-        ) : (
-          <SectionCard title="QC Section" accent="grade" padded>
-            <EmptyState>
-              Slab {selected.slabNo} has already been graded — its outcome is on{' '}
-              <Link href={APP_ROUTES.slabs} className={link}>
-                Slab Records
-              </Link>
-              .
-            </EmptyState>
-          </SectionCard>
-        )
-      ) : null}
-
       <SectionCard
-        title="Recent slabs"
+        title="Recent Slabs Entry"
         accent="brand"
         padded={rows.length === 0}
         actions={
@@ -257,8 +271,9 @@ export default async function OperatorPage({
                   <th className={th}>File Name / Planned Design</th>
                   <th className={`${th} text-right`}>Thickness (cm)</th>
                   <th className={`${th} text-right`}>In-time</th>
-                  <th className={th}>Status</th>
-                  <th className={th}>Outcome</th>
+                  <th className={th}>Grade</th>
+                  <th className={th}>QC Outcome</th>
+                  <th className={th}>Slab Remarks</th>
                   {/* The order the rows are in, made visible: without it a list
                       that mixes production dates looks arbitrarily sorted. */}
                   <th className={`${th} text-right`}>Entered</th>
@@ -270,11 +285,22 @@ export default async function OperatorPage({
                     key={row.id}
                     className={`${dataTable.row} ${row.id === slabId ? 'bg-[var(--surface-muted)]' : ''}`}
                   >
-                    <td className={`${td} text-muted tabular-nums`}>{row.serialNo}</td>
+                    <td className={`${td} text-muted tabular-nums`}>{row.serialNo ?? '—'}</td>
                     <td className={`${td} whitespace-nowrap`}>{dateFmt.format(row.receivedDate)}</td>
                     <td className={`${td} font-mono`}>{row.batchNo}</td>
                     <td className={td}>
-                      <Link href={`${APP_ROUTES.operator}?slab=${row.id}`} className={`${link} font-mono`}>
+                      {/* QC pending: the number is marked in the hold colour
+                          until the slab's QC Report is saved. */}
+                      <Link
+                        href={`${APP_ROUTES.operator}?slab=${row.id}`}
+                        title={row.pendingQc ? 'QC pending — open to finish its QC Report' : undefined}
+                        className={
+                          row.pendingQc
+                            ? 'text-status-hold inline-flex items-center gap-1.5 font-mono font-semibold underline decoration-dotted underline-offset-4'
+                            : `${link} font-mono`
+                        }
+                      >
+                        {row.pendingQc ? <span aria-hidden className="bg-status-hold inline-block size-1.5 rounded-full" /> : null}
                         {row.slabNo}
                       </Link>
                     </td>
@@ -287,10 +313,17 @@ export default async function OperatorPage({
                       {row.inTime ? timeFmt.format(row.inTime) : '—'}
                     </td>
                     <td className={td}>
-                      <StatusBadge status={row.status} disposition={row.currentDisposition} />
+                      {row.currentGrade ? <GradeBadge grade={row.currentGrade} /> : <span className="text-muted">—</span>}
                     </td>
                     <td className={td}>
-                      <DispositionBadge disposition={row.currentDisposition} />
+                      {row.pendingQc ? (
+                        <span className="text-status-hold text-sm font-medium whitespace-nowrap">In-Processing</span>
+                      ) : (
+                        <DispositionBadge disposition={row.currentDisposition} />
+                      )}
+                    </td>
+                    <td className={`${td} max-w-[16rem]`}>
+                      {manualRemark(row.remarks, row.currentDisposition) ?? <span className="text-muted">—</span>}
                     </td>
                     <td className={`${td} text-muted text-right whitespace-nowrap tabular-nums`}>
                       {dateFmt.format(row.enteredAt)} {timeFmt.format(row.enteredAt)}

@@ -57,10 +57,9 @@ describe('grading and dispositions', () => {
   });
 
   it('routes each grade exactly as CHROMIA_PROCESS.md section 6 specifies', () => {
-    expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.A]).toEqual([
-      Disposition.DISPATCH,
-      Disposition.STOCK,
-    ]);
+    // Grade A goes to Stock and only Stock (27 Oct 2026); it is dispatched
+    // later, from the Stockyard.
+    expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.A]).toEqual([Disposition.STOCK]);
     expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.B]).toEqual([
       Disposition.STOCK,
       Disposition.SAMPLE_CUTTING,

@@ -584,6 +584,14 @@ model ChromiaSlab {
   isRecalibrationOut Boolean @default(false) @map("is_recalibration_out")
 
   receivedDate       DateTime @map("received_date")
+  /// S.No. — the slab's number within its own production date, as the paper
+  /// register numbers it. NUMBERED BY THE DATABASE, never by the app: the
+  /// trigger chromia_slab_entry_serial (migration 0002) gives every new row,
+  /// and every row whose production date changes, the next number for that
+  /// date, under a per-date lock, so two saves at once cannot share one. The
+  /// unique index below refuses a duplicate whatever writes it. A deleted slab
+  /// leaves a gap; the slabs after it keep their numbers.
+  entrySerialNo      Int?     @map("entry_serial_no")
   conditionOnArrival String?  @map("condition_on_arrival")
   remarks            String?
 
@@ -619,6 +627,7 @@ model ChromiaSlab {
   @@index([batchId])
   @@index([currentLocationId])
   @@index([isRecalibrationOut])
+  @@unique([receivedDate, entrySerialNo])
   @@index([receivedDate])
   @@index([deletedAt])
   @@map("chromia_slab")

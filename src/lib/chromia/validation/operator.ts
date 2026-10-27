@@ -72,6 +72,18 @@ export const operatorEntrySchema = z.object({
       const parsed = typeof value === 'number' ? value : Number(value);
       return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
     }),
+  /**
+   * Slab Remarks, from the QC Report under the entry (27 Oct 2026). Optional
+   * and free text; empty means none. It is saved with the entry even when the
+   * slab is left In-Processing, so a note written at booking is not lost
+   * waiting for the grade.
+   */
+  remarks: z
+    .string()
+    .trim()
+    .max(500, 'Slab remarks are too long')
+    .optional()
+    .transform((value) => (value === '' ? undefined : value)),
 });
 
 export type OperatorEntryInput = z.infer<typeof operatorEntrySchema>;

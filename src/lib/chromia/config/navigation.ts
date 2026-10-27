@@ -26,7 +26,7 @@ export interface NavItem {
  */
 export const navigation: readonly NavItem[] = [
   { title: 'Dashboard', href: '/chromia/dashboard', icon: 'dashboard' },
-  { title: 'Operator Entry', href: '/chromia/operator', icon: 'operator' },
+  { title: 'Slab Entry', href: '/chromia/operator', icon: 'operator' },
   { title: 'Slab Records', href: '/chromia/slabs', icon: 'slabs' },
   { title: 'Stockyard', href: '/chromia/stockyard', icon: 'stockyard' },
   { title: 'Dispatch', href: '/chromia/dispatch', icon: 'dispatch' },

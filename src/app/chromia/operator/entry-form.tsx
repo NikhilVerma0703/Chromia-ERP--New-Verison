@@ -1,15 +1,18 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState, useTransition } from 'react';
+import { useActionState, useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { Field, FormError } from '@/components/chromia/ui';
 import { ComboInput } from '@/components/chromia/ui/combo';
 import { field, FieldGrid, SectionCard, selectField } from '@/components/chromia/ui/form';
 import { TimeInput } from '@/components/chromia/ui/time-input';
+import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
-import { recordOperatorEntryAction, type OperatorFormState } from '@/lib/chromia/server/actions/operator';
+import { saveSlabEntryAction, type OperatorFormState } from '@/lib/chromia/server/actions/operator';
 import { checkSlabNoAction } from '@/lib/chromia/server/actions/slab-record';
-import { updateSlabRecordAction } from '@/lib/chromia/server/actions/slab-record';
+
+import { QcSection, type Option } from '../slabs/new/qc-section';
 
 const INITIAL_STATE: OperatorFormState = {};
 
@@ -26,6 +29,22 @@ export interface EditingSlab {
   remarks: string;
 }
 
+/**
+ * The QC Report under the entry.
+ *
+ *   grade   — the slab is new, or still waiting for QC: grade it, or leave the
+ *             grade empty to save it In-Processing;
+ *   correct — the Edit path: the current grade and outcome, to be changed;
+ *   none    — its QC is settled (graded, dispatched, in recalibration…): the
+ *             report says why in `message`, and only Slab Remarks is editable.
+ */
+export interface QcReport {
+  mode: 'grade' | 'correct' | 'none';
+  recalibrationReasons: Option[];
+  initial?: { grade?: string; disposition?: string };
+  message?: ReactNode;
+}
+
 interface Props {
   /** `yyyy-mm-dd` the blank form starts on. */
   entryDate: string;
@@ -36,6 +55,14 @@ interface Props {
   batchNos: string[];
   /** Set when the screen is open on an existing slab — see the operator page. */
   editing?: EditingSlab;
+  qc: QcReport;
+  /** Where to return after saving an opened slab (see the page's `back`). */
+  back?: string;
+}
+
+/** Only an in-app Chromia path is ever navigated to. */
+function returnTarget(back?: string): string {
+  return back && back.startsWith('/chromia/') ? back : APP_ROUTES.operator;
 }
 
 export function EntryForm({
@@ -45,20 +72,26 @@ export function EntryForm({
   fileNames,
   batchNos,
   editing,
+  qc,
+  back,
 }: Props) {
   const isEditing = editing !== undefined;
+  const router = useRouter();
 
   /*
-   * One form, two actions. Saving a new row records an entry; saving an open
-   * slab corrects it. The two server actions return the same shape, so the
-   * form does not care which it called — and keeping it one component is what
-   * stops the fields and their rules drifting apart, which is the whole reason
-   * a correction is held to the same schema as the original entry.
+   * ONE FORM, ONE BUTTON (27 Oct 2026). The entry and its QC Report are one
+   * form now, saved by one action: a new row is recorded, an opened slab is
+   * corrected, and either is graded in the same press when a grade is chosen
+   * (saveSlabEntryAction says how). Keeping it one component is still what
+   * stops the fields and their rules drifting apart — a correction is held to
+   * the same schema as the original entry.
    */
   const [state, formAction, isPending] = useActionState<OperatorFormState, FormData>(
-    isEditing ? updateSlabRecordAction : recordOperatorEntryAction,
+    saveSlabEntryAction,
     INITIAL_STATE,
   );
+  const [isReturning, startReturn] = useTransition();
+  const handled = useRef<number | string | null>(null);
 
   /*
    * PRODUCTION DATE STAYS PUT. It used to be an uncontrolled input whose
@@ -91,10 +124,6 @@ export function EntryForm({
   /* Blank, not the clock. The in-time is optional now, and pre-filling it with
      "now" made a guess look like a reading on every row that was left alone. */
   const [inTime, setInTime] = useState(editing?.inTime ?? '');
-  /* Only sent when correcting — a new entry has no remark yet, and the QC
-     section is what writes one. See the field below. */
-  const [remarks, setRemarks] = useState(editing?.remarks ?? '');
-
   const slabInput = useRef<HTMLInputElement>(null);
 
   /**
@@ -118,15 +147,35 @@ export function EntryForm({
     });
   };
 
+  /* The QC Report starts blank for every new row: remounted on each save. */
+  const [qcKey, setQcKey] = useState(0);
+
   useEffect(() => {
-    if (!state.savedAt || isEditing) return;
-    // Only the slab number and the in-time clear: everything else is the run
-    // the operator is still booking, the production date included.
+    // The entry saved but its QC did not: open that slab, In-Processing, so
+    // its QC Report is finished on it — never re-saved as a new row, which
+    // the slab number would now refuse.
+    if (state.qcFailed && state.savedSlabId) {
+      if (handled.current === state.savedSlabId) return;
+      handled.current = state.savedSlabId;
+      const opened = `${APP_ROUTES.operator}?slab=${state.savedSlabId}`;
+      startReturn(() => router.push(opened));
+      return;
+    }
+    if (!state.savedAt || handled.current === state.savedAt) return;
+    handled.current = state.savedAt;
+    if (isEditing) {
+      // An opened slab goes back to where it was opened from.
+      startReturn(() => router.push(returnTarget(back)));
+      return;
+    }
+    // Only the slab number, the in-time and the QC Report clear: everything
+    // else is the run the operator is still booking, the date included.
     setSlabNo('');
     setInTime('');
     setDuplicate(false);
+    setQcKey((key) => key + 1);
     slabInput.current?.focus();
-  }, [state.savedAt, isEditing]);
+  }, [state.savedAt, state.qcFailed, state.savedSlabId, isEditing, back, router]);
 
   const errors = state.fieldErrors;
   const slabNoError = errors?.slabNo?.[0] ?? (duplicate ? DUPLICATE_SLAB_NO_MESSAGE : undefined);
@@ -136,20 +185,30 @@ export function EntryForm({
   /* An error under a field this form does not render has nowhere to appear, and
      the screen would simply sit still on Save — which is exactly what a missing
      `remarks` field did. Anything unplaced is said in the banner instead. */
-  const shown = new Set(['entryDate', 'receivedDate', 'batchNo', 'slabNo', 'baseMaterial', 'fileName', 'thicknessCm', 'inTime', 'remarks']);
+  const shown = new Set(['entryDate', 'receivedDate', 'batchNo', 'slabNo', 'baseMaterial', 'fileName', 'thicknessCm', 'inTime', 'remarks', 'grade', 'disposition', 'recalibrationReason', 'slabRemarks']);
+  // The entry's own remark error belongs under the QC Report's field.
+  const qcErrors = errors?.remarks ? { ...errors, slabRemarks: errors.remarks } : errors;
   const unplaced = Object.entries(errors ?? {})
     .filter(([key, messages]) => !shown.has(key) && messages && messages.length > 0)
     .map(([key, messages]) => `${key}: ${messages?.[0]}`)
     .join(' · ');
 
   return (
-    <div className="mb-6">
+    <form action={formAction} className="mb-6 flex flex-col gap-6">
+      {isEditing ? <input type="hidden" name="slabId" value={editing.id} /> : null}
+      <input type="hidden" name="qcMode" value={qc.mode} />
+      {qc.mode === 'correct' ? (
+        <>
+          <input type="hidden" name="initialGrade" value={qc.initial?.grade ?? ''} />
+          <input type="hidden" name="initialDisposition" value={qc.initial?.disposition ?? ''} />
+        </>
+      ) : null}
+
       <SectionCard
-        title={isEditing ? `Entry — slab ${editing.slabNo}` : 'New entry'}
+        title={isEditing ? `Entry — slab ${editing.slabNo}` : 'New Entry'}
         accent="active"
       >
-        <form action={formAction} className="flex flex-col gap-6">
-          {isEditing ? <input type="hidden" name="slabId" value={editing.id} /> : null}
+        <div className="flex flex-col gap-6">
 
           <FieldGrid columns={3}>
             <Field label="Production Date *" htmlFor={dateFieldName} error={dateError}>
@@ -274,39 +333,59 @@ export function EntryForm({
               />
             </Field>
 
-            {/*
-             * Only when correcting, and it MUST be rendered then. The
-             * correction is a whole-record save: the service writes
-             * `remarks: input.remarks ?? null`, so a form that does not send
-             * the field would blank whatever QC wrote there. Leaving it out
-             * did worse than that — FormData.get returns null for a field that
-             * is not in the document, the schema takes a string or nothing but
-             * never null, and every "Save changes" failed the parse with the
-             * error landing under a field that was not on screen to show it.
-             */}
-            {isEditing ? (
-              <Field label="Slab Remarks" htmlFor="remarks" error={errors?.remarks?.[0]}>
+          </FieldGrid>
+        </div>
+      </SectionCard>
+
+      {/*
+       * QC Report — part of this form, saved by the same button. Slab Remarks
+       * lives here now (it was an entry field), apart from the outcome. When
+       * the slab's QC is settled, the report says why and keeps only the
+       * remark editable; the remark still travels as `slabRemarks`.
+       */}
+      <SectionCard title="QC Report" accent="grade">
+        {qc.mode === 'none' ? (
+          <div className="flex flex-col gap-4">
+            {qc.message ? <p className="text-muted text-sm">{qc.message}</p> : null}
+            <FieldGrid>
+              <Field label="Slab Remarks" htmlFor="slabRemarks" error={qcErrors?.slabRemarks?.[0]}>
                 <input
-                  id="remarks"
-                  name="remarks"
-                  value={remarks}
-                  onChange={(event) => setRemarks(event.target.value)}
-                  placeholder="Dispatch · Stock · RECALIBRATE - reason"
+                  id="slabRemarks"
+                  name="slabRemarks"
+                  defaultValue={editing?.remarks ?? ''}
+                  placeholder="Optional"
+                  maxLength={500}
                   className={field}
                 />
               </Field>
-            ) : null}
-          </FieldGrid>
+            </FieldGrid>
+          </div>
+        ) : (
+          <QcSection
+            key={qcKey}
+            optional={qc.mode === 'grade'}
+            remarksField
+            recalibrationReasons={qc.recalibrationReasons}
+            errors={qcErrors}
+            initial={{
+              grade: qc.initial?.grade,
+              disposition: qc.initial?.disposition,
+              slabRemarks: editing?.remarks ?? '',
+            }}
+          />
+        )}
+      </SectionCard>
 
+      <div className="flex flex-col gap-4">
           <FormError message={state.error ?? (unplaced || undefined)} />
 
-          <div className="border-line flex flex-wrap items-center gap-4 border-t pt-5">
+          <div className="flex flex-wrap items-center gap-4">
             <button
               type="submit"
-              disabled={isPending || duplicate}
+              disabled={isPending || isReturning || duplicate}
               className="bg-brand-600 hover:bg-brand-700 inline-flex h-11 items-center justify-center rounded-lg px-6 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(16,24,40,0.12)] transition-colors disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {isPending ? 'Saving…' : isEditing ? 'Save changes' : 'Save entry'}
+              {isPending ? 'Saving…' : isReturning ? 'Saved — returning…' : 'Save Entry'}
             </button>
 
             {state.savedSlabNo && !state.error ? (
@@ -316,8 +395,7 @@ export function EntryForm({
               </span>
             ) : null}
           </div>
-        </form>
-      </SectionCard>
-    </div>
+      </div>
+    </form>
   );
 }

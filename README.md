@@ -65,7 +65,7 @@ Then open http://localhost:3000.
 - Table and column names are the same as production (`chromia_*`, `attendance_*`, `fg_*`, `entry_photo`, `polish_qc`, `press`, `jot`). The models in `prisma/schema.prisma` are copied unchanged from the main ERP.
 - Schema changes are made with Prisma migrations: edit `schema.prisma`, then `npm run db:migrate -- --name <what-changed>`. Pacific ERP's hand-numbered Neon scripts are kept only as history in `docs/history/sql/`. **Do not run them.**
 - **The app runs on UTC.** `npm run dev`, `build`, `start` and the seed scripts set `TZ=UTC` (through `cross-env`), because production runs on Vercel in UTC and stores dates as UTC midnight. Screens still show plant time (Asia/Kolkata), and the attendance clock rules use the plant clock. Start the app with these npm scripts rather than calling `next dev` directly, or dates will be stored in your PC's time zone.
-- A fresh database has no slabs. Data is entered through the app (Operator Entry, Import, Slab Intake).
+- A fresh database has no slabs. Data is entered through the app (Slab Entry, Import, Slab Intake).
 
 ## Folder map
 

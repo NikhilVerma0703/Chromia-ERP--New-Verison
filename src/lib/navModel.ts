@@ -79,7 +79,7 @@ export type NavModel =
 // the same idea, so the two shop-floor modules read as one family.
 export const CHROMIA_ITEMS: NavItem[] = [
   { href: "/chromia/dashboard",              icon: I.overview, label: "Dashboard" },
-  { href: "/chromia/operator",               icon: I.factory,  label: "Operator Entry" },
+  { href: "/chromia/operator",               icon: I.factory,  label: "Slab Entry" },
   { href: "/chromia/slabs",                  icon: I.batch,    label: "Slab Records" },
   { href: "/chromia/stockyard",              icon: I.samples,  label: "Stockyard" },
   // Dispatch was in the module's own list (navigation.ts) and missing here, so

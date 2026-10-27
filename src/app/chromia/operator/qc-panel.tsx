@@ -32,6 +32,11 @@ interface Props {
    * instead of grading a fresh slab.
    */
   edit?: boolean;
+  /**
+   * Pre-filled values. On the Edit path, the current grade and outcome; on a
+   * plain grade, only `slabRemarks` — the remark the slab already carries,
+   * which this panel has no field for and must hand back unchanged.
+   */
   initial?: { grade?: string; disposition?: string; slabRemarks?: string };
 }
 
@@ -42,7 +47,9 @@ function returnTarget(back?: string): string {
 }
 
 /**
- * The QC Section, on the operator's own screen.
+ * The QC Section as a form of its own — the re-grade after recalibration.
+ * (Slab Entry no longer uses it: its QC Report is part of the entry form and
+ * saves with the entry; see operator/entry-form.tsx.)
  *
  * Its own form and its own button, deliberately — correcting the operator's
  * entry and deciding a slab's grade are different acts, and the grade opens a
@@ -97,7 +104,7 @@ export function QcPanel({
           <QcSection
             recalibrationReasons={recalibrationReasons}
             errors={state.fieldErrors}
-            initial={edit ? initial : undefined}
+            initial={edit ? initial : { slabRemarks: initial?.slabRemarks }}
           />
 
           <FormError message={state.error} />

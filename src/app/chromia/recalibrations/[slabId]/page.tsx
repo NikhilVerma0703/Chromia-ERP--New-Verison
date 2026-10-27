@@ -152,6 +152,9 @@ export default async function RecalibrationSlabPage({
           slabId={record.id}
           slabNo={record.slabNo}
           recalibrationReasons={recalibrationReasons}
+          // The slab's own remark, handed back unchanged: this screen has no
+          // remarks field, and grading must not blank what Slab Entry wrote.
+          initial={{ slabRemarks: record.remarks ?? '' }}
         />
       </div>
     );
