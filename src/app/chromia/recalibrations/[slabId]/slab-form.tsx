@@ -21,6 +21,8 @@ export interface TripView {
   sentDate: string;
   receivedDate: string;
   reason: string;
+  /** Where this attempt stands, in words. */
+  status: string;
 }
 
 export interface SlabDetails {
@@ -38,7 +40,7 @@ interface Props {
   /** recalibration-flow stage: AWAITING_SEND · OUT · RETURNED · IN_PRODUCTION · CLEARED · WRITTEN_OFF */
   stage: string;
   status: string;
-  /** Every trip, oldest first — shown, never edited. */
+  /** Every trip, oldest first. One already back has its dates as inputs, to correct. */
   trips: TripView[];
   /** The trip whose dates part A records, if the slab has one to send or receive. */
   currentTrip: { attemptNumber: number; sentDate: string; receivedDate: string } | null;
@@ -118,18 +120,61 @@ export function RecalibrationSlabForm(props: Props) {
                     <th className="py-1.5 pr-4">Attempt</th>
                     <th className="py-1.5 pr-4">Sent Date</th>
                     <th className="py-1.5 pr-4">Received Date</th>
-                    <th className="py-1.5">Reason for Recalibration</th>
+                    <th className="py-1.5 pr-4">Reason for Recalibration</th>
+                    <th className="py-1.5">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {props.trips.map((trip) => (
-                    <tr key={trip.attemptNumber} className="border-line border-t" data-trip={trip.attemptNumber}>
-                      <td className="py-2 pr-4 font-medium">{ord(trip.attemptNumber)}</td>
-                      <td className="py-2 pr-4 tabular-nums">{trip.sentDate || '—'}</td>
-                      <td className="py-2 pr-4 tabular-nums">{trip.receivedDate || '—'}</td>
-                      <td className="py-2">{trip.reason || '—'}</td>
-                    </tr>
-                  ))}
+                  {props.trips.map((trip) => {
+                    // A trip already back is corrected here; the one waiting
+                    // or out is recorded in the fields below.
+                    const closed = trip.sentDate !== '' && trip.receivedDate !== '';
+                    const error = errors?.[`trip_${trip.attemptNumber}_sent`]?.[0];
+                    return (
+                      <tr key={trip.attemptNumber} className="border-line border-t align-top" data-trip={trip.attemptNumber}>
+                        <td className="py-2 pr-4 font-medium">{ord(trip.attemptNumber)}</td>
+                        <td className="py-2 pr-4 tabular-nums">
+                          {closed ? (
+                            <>
+                              <input type="hidden" name={`initial_trip_${trip.attemptNumber}_sent`} value={trip.sentDate} />
+                              <input
+                                name={`trip_${trip.attemptNumber}_sent`}
+                                type="date"
+                                max={props.today}
+                                defaultValue={trip.sentDate}
+                                aria-label={`Sent Date — ${ord(trip.attemptNumber)} attempt`}
+                                className={`${field} h-9 w-40`}
+                              />
+                            </>
+                          ) : (
+                            trip.sentDate || '—'
+                          )}
+                        </td>
+                        <td className="py-2 pr-4 tabular-nums">
+                          {closed ? (
+                            <>
+                              <input type="hidden" name={`initial_trip_${trip.attemptNumber}_received`} value={trip.receivedDate} />
+                              <input
+                                name={`trip_${trip.attemptNumber}_received`}
+                                type="date"
+                                max={props.today}
+                                defaultValue={trip.receivedDate}
+                                aria-label={`Received Date — ${ord(trip.attemptNumber)} attempt`}
+                                className={`${field} h-9 w-40`}
+                              />
+                            </>
+                          ) : (
+                            trip.receivedDate || '—'
+                          )}
+                        </td>
+                        <td className="py-2 pr-4">{trip.reason || '—'}</td>
+                        <td className="py-2">
+                          <span className="text-status-recalibration font-medium">{trip.status}</span>
+                          {error ? <p className="text-status-waste mt-1 text-xs">{error}</p> : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -271,7 +316,7 @@ export function RecalibrationSlabForm(props: Props) {
           >
             {isPending ? 'Saving…' : isReturning || state.savedAt ? 'Saved — returning…' : 'Update Slab'}
           </button>
-          <span className="text-muted text-sm">Saves only what you entered or changed, in any of the three parts.</span>
+          <span className="text-muted text-sm">Saves only what you entered or changed, in any of the three parts — an earlier trip’s dates included.</span>
         </div>
       </div>
     </form>

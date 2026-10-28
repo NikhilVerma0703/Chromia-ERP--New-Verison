@@ -152,7 +152,7 @@ export async function saveSlabEntryAction(
       qcMode === 'correct' &&
       grade === text(formData, 'initialGrade') &&
       parsed.data.disposition === text(formData, 'initialDisposition') &&
-      !parsed.data.recalibrationReason;
+      (parsed.data.recalibrationReason ?? '') === text(formData, 'initialReason');
 
     if (!unchanged) {
       qc = new FormData();

@@ -220,7 +220,9 @@ const ON_THE_BOARD: Prisma.ChromiaSlabWhereInput = {
 async function boardStates(where: Record<string, unknown>): Promise<BoardSlab[]> {
   const slabs = await prisma.chromiaSlab.findMany({
     where: { AND: [ON_THE_BOARD, where as Prisma.ChromiaSlabWhereInput] },
-    orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+    // The board's rows follow its slabs: newest Production Date first
+    // (28 Oct 2026; it was the last-touched slab first).
+    orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
     select: {
       id: true,
       currentDisposition: true,

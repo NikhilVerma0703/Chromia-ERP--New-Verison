@@ -60,7 +60,7 @@ describe('Approved Slabs page (27 Oct 2026)', () => {
     expect(form).toMatch(/Clear Filters/);
   });
 
-  it('lists the ten columns in exactly the order asked for', () => {
+  it('lists the ten columns in exactly the order asked for, and the Action column last (28 Oct 2026)', () => {
     const head = page.slice(page.indexOf('<thead'), page.indexOf('</thead>'));
     expect([...head.matchAll(/>([^<>]+)<\/th>/g)].map((m) => m[1])).toEqual([
       'Approved Date',
@@ -73,6 +73,7 @@ describe('Approved Slabs page (27 Oct 2026)', () => {
       'Grade',
       'Slab Remarks',
       'View',
+      'Action',
     ]);
   });
 

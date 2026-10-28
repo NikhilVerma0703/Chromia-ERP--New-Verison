@@ -125,12 +125,12 @@ describe('Recalibration page and the unified form', () => {
     expect(page).toMatch(/BOARD_VIEWS\.map\(\(view\) => \{[\s\S]{0,200}<Link\s+key=\{view\}\s+href=\{cardHref\(view\)\}/);
   });
 
-  it('lists the fourteen columns in exactly the order asked for, the Slab No. bold', () => {
+  it('lists the fourteen columns in exactly the order asked for, the Slab No. bold, then Action (28 Oct 2026)', () => {
     const head = page.slice(page.indexOf('<thead'), page.indexOf('</thead>'));
     expect([...head.matchAll(/>([^<>]+)<\/th>/g)].map((m) => m[1])).toEqual([
       'Production Date', 'Batch No.', 'Slab No.', 'Base Material / Slab Name', 'File Name / Planned Design',
       'Thickness (cm)', 'Grade', 'Slab Outcome', 'Reason for Recalibration', 'Slab Remarks',
-      'Attempt Number', 'Sent Date', 'Received Date', 'Current Status',
+      'Attempt Number', 'Sent Date', 'Received Date', 'Current Status', 'Action',
     ]);
     expect(page).toMatch(/href=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{row\.slabId\}`\}[\s\S]{0,400}font-bold/);
   });

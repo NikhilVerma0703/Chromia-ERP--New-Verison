@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
+import { EditLink } from '@/components/chromia/ui/edit-link';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { parsePage, RECALIBRATION_PAGE_SIZE } from '@/lib/chromia/list-limits';
@@ -175,6 +176,7 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
                     <th className={th}>Sent Date</th>
                     <th className={th}>Received Date</th>
                     <th className={th}>Current Status</th>
+                    <th className={`${th} text-right`}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -205,6 +207,9 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
                       <td className={`${tdMuted} whitespace-nowrap`}>{row.tripReceivedDate ? dateFmt.format(row.tripReceivedDate) : '—'}</td>
                       <td className={`${td} whitespace-nowrap`}>
                         <span className={STAGE_CLASS[stageOf(row.state)] ?? ''}>{statusLabel(row.state, row.grade)}</span>
+                      </td>
+                      <td className={`${td} text-right`}>
+                        <EditLink href={`${APP_ROUTES.recalibrations}/${row.slabId}`} slabNo={row.slabNo} />
                       </td>
                     </tr>
                   ))}

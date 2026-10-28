@@ -18,7 +18,8 @@ import { stockyardSlabWhere, type StockyardFilters } from '@/lib/chromia/stockya
 const IN_STOCK_NOW = { deletedAt: null, status: SlabStatus.IN_STOCK } as const;
 
 /**
- * Every slab whose current outcome is Stock, oldest holding first.
+ * Every slab whose current outcome is Stock, newest Production Date first
+ * (28 Oct 2026; it was oldest holding first).
  *
  * The optional filters narrow the rack list by production date, batch and slab
  * number — the same three the Recalibration page takes — AND-ed onto the "in
@@ -30,7 +31,7 @@ export async function listStockedSlabs(filters?: SimpleFilters | StockyardFilter
       ...IN_STOCK_NOW,
       ...(filters ? ('outcome' in filters ? stockyardSlabWhere(filters) : simpleSlabWhere(filters)) : {}),
     },
-    orderBy: [{ receivedDate: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
     select: {
       id: true,
       slabNo: true,
@@ -138,7 +139,8 @@ export async function listStockOutcomeRecords(outcome: StockOutcomeValue, filter
       releaseOutcome: outcome as StockOutcome,
       slab: { deletedAt: null, ...stockyardSlabWhere(filters) },
     },
-    orderBy: [{ releasedAt: 'desc' }, { updatedAt: 'desc' }],
+    // Newest Production Date first (28 Oct 2026), then the latest outcome.
+    orderBy: [{ slab: { receivedDate: 'desc' } }, { releasedAt: 'desc' }, { updatedAt: 'desc' }],
     select: {
       id: true,
       stockDate: true,

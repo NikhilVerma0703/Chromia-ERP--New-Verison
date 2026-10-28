@@ -108,10 +108,11 @@ export async function listDispatchedSlabs(filters: DispatchedFilters, now: Date 
       disposition: dispatch.slab.currentDisposition,
       remarks: dispatch.slab.remarks,
     }))
+    // Newest Production Date first (28 Oct 2026), then the latest dispatch.
     .sort(
       (a, b) =>
-        b.dispatchDate.getTime() - a.dispatchDate.getTime() ||
         b.receivedDate.getTime() - a.receivedDate.getTime() ||
+        b.dispatchDate.getTime() - a.dispatchDate.getTime() ||
         a.slabNo.localeCompare(b.slabNo, undefined, { numeric: true }),
     );
 }

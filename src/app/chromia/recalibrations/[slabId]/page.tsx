@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/chromia/ui';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { toDateInput, toTimeInput } from '@/lib/chromia/operator-register';
 import { toPlantDateInput } from '@/lib/chromia/plant-time';
-import { openTrip, stageOf, statusLabel } from '@/lib/chromia/recalibration-flow';
+import { openTrip, ordinal, stageOf, statusLabel } from '@/lib/chromia/recalibration-flow';
 import { manualRemark } from '@/lib/chromia/slab-remarks';
 import { listRecalibrationReasons } from '@/lib/chromia/server/repositories/recalibration-repository';
 import { loadSlabTrips } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
@@ -25,6 +25,15 @@ export const dynamic = 'force-dynamic';
 
 /** A stored day as the date input writes it, or ''. */
 const day = (date: Date | null) => (date ? toDateInput(date) : '');
+
+/** Where one attempt stands — the board's words, for that attempt alone. */
+function tripStatus(trip: { attemptNumber: number; sentDate: Date | null; receivedDate: Date | null; restartedAt: Date | null }): string {
+  const n = ordinal(trip.attemptNumber);
+  if (!trip.sentDate) return `Need ${n} Time Recalibration`;
+  if (!trip.receivedDate) return `Sent for ${n} Time Recalibration`;
+  if (!trip.restartedAt) return `Received from the ${n} Time Recalibration`;
+  return `Back in processing after the ${n} attempt`;
+}
 
 /**
  * One slab's Recalibration form (rebuilt 27 Oct 2026) — opened by clicking
@@ -90,6 +99,7 @@ export default async function RecalibrationSlabPage({ params }: { params: Promis
           sentDate: day(trip.sentDate),
           receivedDate: day(trip.receivedDate),
           reason: trip.reason?.name ?? '',
+          status: tripStatus(trip),
         }))}
         currentTrip={
           current

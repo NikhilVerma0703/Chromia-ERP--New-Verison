@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Field, FormError } from '@/components/chromia/ui';
 import { ComboInput } from '@/components/chromia/ui/combo';
 import { field, FieldGrid, SectionCard, selectField } from '@/components/chromia/ui/form';
+import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { TimeInput } from '@/components/chromia/ui/time-input';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
@@ -41,7 +42,8 @@ export interface EditingSlab {
 export interface QcReport {
   mode: 'grade' | 'correct' | 'none';
   recalibrationReasons: Option[];
-  initial?: { grade?: string; disposition?: string };
+  /** What was saved — pre-filled on the Edit path, and shown when the QC is settled. */
+  initial?: { grade?: string; disposition?: string; reason?: string };
   message?: ReactNode;
 }
 
@@ -201,6 +203,7 @@ export function EntryForm({
         <>
           <input type="hidden" name="initialGrade" value={qc.initial?.grade ?? ''} />
           <input type="hidden" name="initialDisposition" value={qc.initial?.disposition ?? ''} />
+          <input type="hidden" name="initialReason" value={qc.initial?.reason ?? ''} />
         </>
       ) : null}
 
@@ -347,6 +350,27 @@ export function EntryForm({
         {qc.mode === 'none' ? (
           <div className="flex flex-col gap-4">
             {qc.message ? <p className="text-muted text-sm">{qc.message}</p> : null}
+            {qc.initial?.grade ? (
+              // The saved QC Report, shown as it is (28 Oct 2026): settled, so
+              // not changed here, but every value of it is in front of the user.
+              <FieldGrid columns={3}>
+                <Field label="Grade" htmlFor="saved-grade">
+                  <div id="saved-grade" className="flex h-11 items-center">
+                    <GradeBadge grade={qc.initial.grade as never} />
+                  </div>
+                </Field>
+                <Field label="QC Outcome" htmlFor="saved-outcome">
+                  <div id="saved-outcome" className="flex h-11 items-center">
+                    {qc.initial.disposition ? <DispositionBadge disposition={qc.initial.disposition as never} /> : <span className="text-muted">—</span>}
+                  </div>
+                </Field>
+                {qc.initial.reason ? (
+                  <Field label="Reason for Recalibration" htmlFor="saved-reason">
+                    <input id="saved-reason" readOnly value={qc.initial.reason} className={`${field} cursor-default bg-[var(--surface-muted)]`} />
+                  </Field>
+                ) : null}
+              </FieldGrid>
+            ) : null}
             <FieldGrid>
               <Field label="Slab Remarks" htmlFor="slabRemarks" error={qcErrors?.slabRemarks?.[0]}>
                 <input
@@ -370,6 +394,7 @@ export function EntryForm({
             initial={{
               grade: qc.initial?.grade,
               disposition: qc.initial?.disposition,
+              reasonName: qc.initial?.reason,
               slabRemarks: editing?.remarks ?? '',
             }}
           />

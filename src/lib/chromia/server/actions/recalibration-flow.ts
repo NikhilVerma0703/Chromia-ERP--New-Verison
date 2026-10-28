@@ -20,7 +20,9 @@ import {
   recalibrationTripSchema,
   restartAfterRecalibrationSchema,
 } from '@/lib/chromia/validation/recalibration-flow';
-import { restartProduction, saveTrip, setTripReason } from '@/lib/chromia/server/services/recalibration-flow-service';
+import { correctTripDates, restartProduction, saveTrip, setTripReason } from '@/lib/chromia/server/services/recalibration-flow-service';
+import { toPlantDateInput } from '@/lib/chromia/plant-time';
+import { ordinal } from '@/lib/chromia/recalibration-flow';
 
 export interface RecalibrationFormState {
   error?: string;
@@ -199,6 +201,36 @@ export async function updateRecalibrationSlabAction(
       else trip = { sentDate: parsed.data.sentDate, receivedDate: parsed.data.receivedDate };
     }
   }
+  // ── A: earlier trips, corrected (28 Oct 2026) ──────────────────────────
+  // Every trip already back shows its Sent and Received dates as inputs
+  // (trip_<n>_sent / trip_<n>_received, with their saved values beside them);
+  // only those changed are checked and saved, by correctTripDates.
+  const today = toPlantDateInput(new Date());
+  const pastTrips: { attemptNumber: number; sentDate: Date; receivedDate: Date }[] = [];
+  for (const key of formData.keys()) {
+    const match = /^trip_(\d+)_sent$/.exec(key);
+    if (!match) continue;
+    const n = Number(match[1]);
+    const tripSent = get(`trip_${n}_sent`);
+    const tripReceived = get(`trip_${n}_received`);
+    if (tripSent === get(`initial_trip_${n}_sent`) && tripReceived === get(`initial_trip_${n}_received`)) continue;
+    const field = `trip_${n}_sent`;
+    if (!tripSent || !tripReceived) {
+      fail(field, `${ordinal(n)} attempt: a trip that is back needs both its Sent and Received dates.`);
+      continue;
+    }
+    const parsed = recalibrationTripSchema.safeParse({ slabId, sentDate: tripSent, receivedDate: tripReceived });
+    if (!parsed.success || !parsed.data.receivedDate) {
+      fail(field, `${ordinal(n)} attempt: enter valid dates.`);
+    } else if (tripSent > today || tripReceived > today) {
+      fail(field, `${ordinal(n)} attempt: a date cannot be in the future.`);
+    } else if (tripReceived < tripSent) {
+      fail(field, `${ordinal(n)} attempt: the received date cannot be earlier than the sent date.`);
+    } else {
+      pastTrips.push({ attemptNumber: n, sentDate: parsed.data.sentDate, receivedDate: parsed.data.receivedDate });
+    }
+  }
+
   /** Back in the plant once A has run: already Received, or received now. */
   const back = now.stage === 'RETURNED' || trip?.receivedDate !== undefined;
 
@@ -283,7 +315,7 @@ export async function updateRecalibrationSlabAction(
   const reasonOnly = !qc && reasonChanged && !back && (now.stage === 'AWAITING_SEND' || now.stage === 'OUT');
 
   if (Object.keys(errors).length) return { fieldErrors: errors };
-  if (!trip && !restartInput && !correction && !qc && !reasonOnly) {
+  if (!trip && pastTrips.length === 0 && !restartInput && !correction && !qc && !reasonOnly) {
     return { error: 'Nothing was changed — enter a date, a slab detail or a QC result, then Update Slab.' };
   }
 
@@ -296,6 +328,10 @@ export async function updateRecalibrationSlabAction(
 
   try {
     const user = await requireActingUser();
+    for (const past of pastTrips) {
+      await correctTripDates(slabId, past.attemptNumber, past, user.id);
+      saved.push(`${ordinal(past.attemptNumber)} trip's dates`);
+    }
     if (trip) {
       await saveTrip(slabId, trip, user.id);
       saved.push(trip.receivedDate ? 'Sent and Received dates' : 'Sent Date');

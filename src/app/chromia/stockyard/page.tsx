@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 
 import { EmptyState, PageHeader, Stat } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
+import { EditLink } from '@/components/chromia/ui/edit-link';
+import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { GradeBadge } from '@/components/chromia/ui/status';
 import { stockedOnDay, stockyardToday, STOCK_OUTCOME_LABELS } from '@/lib/chromia/constants/stock-outcomes';
 import { type RawSearchParams } from '@/lib/chromia/simple-filters';
@@ -199,6 +201,7 @@ export default async function StockyardPage({
                   <th className={th}>Slab Remarks</th>
                   <th className={`${th} text-right`}>Days in Stock</th>
                   <th className={`${th} text-right`}>Stock Outcome</th>
+                  <th className={`${th} text-right`}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -234,6 +237,9 @@ export default async function StockyardPage({
                           stockedOn={stockedOnDay(row.stockDate)}
                         />
                       )}
+                    </td>
+                    <td className={`${td} text-right`}>
+                      <EditLink href={`${APP_ROUTES.stockyard}/${row.slabId}/edit`} slabNo={row.slabNo} />
                     </td>
                   </tr>
                 ))}

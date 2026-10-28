@@ -93,8 +93,10 @@ export async function listApprovedSlabs(filters: ApprovedFilters) {
       remarks: slab.remarks,
       photo: photos.get(slab.id) ?? null,
     }))
+    // Newest Production Date first (28 Oct 2026), then the latest approval.
     .sort(
       (a, b) =>
+        b.receivedDate.getTime() - a.receivedDate.getTime() ||
         (b.approvedDate?.getTime() ?? 0) - (a.approvedDate?.getTime() ?? 0) ||
         a.slabNo.localeCompare(b.slabNo, undefined, { numeric: true }),
     );

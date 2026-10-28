@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { EmptyState, PageHeader, Stat } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
+import { EditLink } from '@/components/chromia/ui/edit-link';
 import { GradeBadge } from '@/components/chromia/ui/status';
 import { buildApprovedQuery, hasApprovedFilters, parseApprovedFilters } from '@/lib/chromia/approved-filters';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
@@ -102,6 +103,7 @@ export default async function ApprovedSlabsPage({ searchParams }: { searchParams
                   <th className={th}>Grade</th>
                   <th className={th}>Slab Remarks</th>
                   <th className={`${th} text-right`}>View</th>
+                  <th className={`${th} text-right`}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -128,6 +130,9 @@ export default async function ApprovedSlabsPage({ searchParams }: { searchParams
                       </td>
                       <td className={`${td} text-right`}>
                         {slab.photo ? <ViewPhotoButton photoId={slab.photo.id} slabNo={slab.slabNo} /> : <TakePhotoLink href={open} slabNo={slab.slabNo} />}
+                      </td>
+                      <td className={`${td} text-right`}>
+                        <EditLink href={`${open}/edit`} slabNo={slab.slabNo} />
                       </td>
                     </tr>
                   );

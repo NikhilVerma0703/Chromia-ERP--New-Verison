@@ -466,3 +466,58 @@ export async function setTripReason(slabId: string, reasonId: string | null, use
   await prisma.chromiaRecalibrationCycle.update({ where: { id: trip.id }, data: { reasonId } });
   log.info({ slabNo: slab.slabNo, attempt: trip.attemptNumber, userId }, 'Recalibration reason changed');
 }
+
+/**
+ * Correct the Sent and Received dates of a trip that is already back (28 Oct
+ * 2026, the Recalibration Edit form) — the 1st, 2nd or any earlier attempt.
+ * The trip waiting or out is saveTrip's, not this.
+ *
+ * The corrected dates must still tell the slab's journey in order: sent no
+ * later than received, received no later than the slab went back on the line
+ * (its restart), and no earlier than the previous trip came back. Only the
+ * dates change: the attempt, its reason and the slab's stage stay as they are.
+ */
+export async function correctTripDates(
+  slabId: string,
+  attemptNumber: number,
+  input: { sentDate: Date; receivedDate: Date },
+  userId: string,
+) {
+  const slab = await loadSlab(slabId);
+  const index = slab.recalibrations.findIndex((t) => t.attemptNumber === attemptNumber);
+  const trip = slab.recalibrations[index];
+  if (!trip || trip.sentDate === null || trip.receivedDate === null) {
+    throw new BusinessRuleViolationError(
+      `The ${ordinal(attemptNumber)} trip of slab ${slab.slabNo} is not back yet — save its dates in Send and Receive`,
+    );
+  }
+
+  const day = (date: Date) => date.toISOString().slice(0, 10);
+  const { sentDate, receivedDate } = input;
+  if (receivedDate < sentDate) {
+    throw new BusinessRuleViolationError(`${ordinal(attemptNumber)} attempt: the received date cannot be earlier than the sent date`);
+  }
+  if (trip.restartedAt && day(receivedDate) > day(trip.restartedAt)) {
+    throw new BusinessRuleViolationError(
+      `${ordinal(attemptNumber)} attempt: the received date cannot be after the slab went back on the line (${day(trip.restartedAt)})`,
+    );
+  }
+  const previous = slab.recalibrations[index - 1];
+  if (previous?.receivedDate && sentDate < previous.receivedDate) {
+    throw new BusinessRuleViolationError(
+      `${ordinal(attemptNumber)} attempt: the sent date cannot be before the ${ordinal(previous.attemptNumber)} trip came back`,
+    );
+  }
+  const next = slab.recalibrations[index + 1];
+  if (next?.sentDate && next.sentDate < receivedDate) {
+    throw new BusinessRuleViolationError(
+      `${ordinal(attemptNumber)} attempt: the received date cannot be after the ${ordinal(next.attemptNumber)} trip was sent`,
+    );
+  }
+
+  await prisma.chromiaRecalibrationCycle.update({
+    where: { id: trip.id },
+    data: { sentDate, receivedDate, turnaroundDays: daysBetween(sentDate, receivedDate) },
+  });
+  log.info({ slabNo: slab.slabNo, attempt: attemptNumber, userId }, 'Recalibration trip dates corrected');
+}

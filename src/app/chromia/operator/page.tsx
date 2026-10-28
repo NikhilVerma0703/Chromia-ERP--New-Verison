@@ -12,6 +12,7 @@ import { manualRemark } from '@/lib/chromia/slab-remarks';
 import { link } from '@/lib/chromia/ui';
 import { listRecalibrationReasons } from '@/lib/chromia/server/repositories/recalibration-repository';
 import { loadSlabRecord } from '@/lib/chromia/server/repositories/slab-record-repository';
+import { loadSlabTrips } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import {
   loadBaseMaterialNames,
@@ -88,7 +89,7 @@ export default async function OperatorPage({
   const backRaw = Array.isArray(params.back) ? params.back[0] : params.back;
   const back = backRaw && backRaw.trim() !== '' ? backRaw : undefined;
 
-  const [rows, baseMaterials, fileNames, batchNos, selected, recalibrationReasons] =
+  const [rows, baseMaterials, fileNames, batchNos, selected, recalibrationReasons, trips] =
     await Promise.all([
       loadRecentRegister(),
       loadBaseMaterialNames(),
@@ -97,7 +98,22 @@ export default async function OperatorPage({
       slabId ? loadSlabRecord(slabId) : Promise.resolve(null),
       // The QC Report is on every entry now, new rows included.
       listRecalibrationReasons(),
+      // Its trips, for the Reason for Recalibration the Edit path shows.
+      slabId ? loadSlabTrips(slabId) : Promise.resolve([]),
     ]);
+
+  /* What was saved, for the Edit path to pre-fill or show (28 Oct 2026):
+     grade, outcome and, for a slab sent to recalibration, the newest reason. */
+  const saved = selected
+    ? {
+        grade: selected.currentGrade ?? '',
+        disposition: selected.currentDisposition ?? '',
+        reason:
+          selected.currentDisposition === 'RECALIBRATION' || trips.length > 0
+            ? ([...trips].reverse().find((t) => t.reason)?.reason?.name ?? '')
+            : '',
+      }
+    : undefined;
 
   /* A slab that has already been graded, or is away at the recalibration
      facility, has no QC left to do — its entry is still shown so it can be
@@ -133,10 +149,11 @@ export default async function OperatorPage({
         ? {
             mode: 'none',
             recalibrationReasons,
+            initial: saved,
             message: (
               <>
                 Slab {selected.slabNo} is in a recalibration cycle — correct it on the{' '}
-                <Link href={APP_ROUTES.recalibrations} className={link}>
+                <Link href={`${APP_ROUTES.recalibrations}/${selected.id}`} className={link}>
                   Recalibration
                 </Link>{' '}
                 page.
@@ -144,14 +161,11 @@ export default async function OperatorPage({
             ),
           }
         : correctionRefusal
-          ? { mode: 'none', recalibrationReasons, message: correctionRefusal.message }
+          ? { mode: 'none', recalibrationReasons, initial: saved, message: correctionRefusal.message }
           : {
               mode: 'correct',
               recalibrationReasons,
-              initial: {
-                grade: selected.currentGrade ?? '',
-                disposition: selected.currentDisposition ?? '',
-              },
+              initial: saved,
             }
       : qcOpen
         ? { mode: 'grade', recalibrationReasons }

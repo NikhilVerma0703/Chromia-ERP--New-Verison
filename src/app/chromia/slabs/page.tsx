@@ -147,7 +147,7 @@ export default async function SlabsPage({
                     <th className={th}>Outcome</th>
                     <th className={th}>Grade</th>
                     <th className={th}>Slab Remarks</th>
-                    <th className={`${th} text-right`}>Actions</th>
+                    <th className={`${th} text-right`}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
