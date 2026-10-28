@@ -84,7 +84,9 @@ describe('Approved Slabs page (27 Oct 2026)', () => {
   });
 
   it('counts each approved slab once, the same way for the KPI and the table', () => {
-    expect(repo).toMatch(/export async function approvedKpi[\s\S]{0,200}distinct: \['slabId'\]/);
+    expect(repo).toMatch(/export async function approvedKpi[\s\S]{0,400}distinct: \['slabId'\]/);
+    // Approved now, each physical slab once (change 10).
+    expect(repo).toMatch(/slab: \{ AND: \[await physicalSlabWhere\(\), \{ status: SlabStatus\.APPROVED \}\] \}/);
     const list = repo.slice(repo.indexOf('export async function listApprovedSlabs('));
     expect(list).toMatch(/releaseOutcome: StockOutcome\.APPROVED,/);
     expect(list).toMatch(/distinct: \['slabId'\]/);

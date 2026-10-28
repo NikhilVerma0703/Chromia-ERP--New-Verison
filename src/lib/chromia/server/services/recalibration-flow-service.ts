@@ -1,4 +1,4 @@
-import { ChromiaCycleStatus as CycleStatus, ChromiaDisposition as Disposition, ChromiaRecalibrationStatus as RecalibrationStatus, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
+import { ChromiaCycleStatus as CycleStatus, ChromiaDisposition as Disposition, ChromiaLocationType as LocationType, ChromiaMovementReason as MovementReason, ChromiaRecalibrationStatus as RecalibrationStatus, ChromiaSlabEventType as SlabEventType, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
 import { prisma, withTransaction, type ChromiaDb, type ChromiaTx } from '@/lib/chromia/db';
 import { BusinessRuleViolationError, ConflictError, NotFoundError } from '@/lib/chromia/errors';
 import { markSlabsChromia, unmarkSlabsChromia } from '@/lib/chromia/inventory-bridge';
@@ -247,7 +247,46 @@ export async function saveTrip(
 
   const returning = receivedDate !== null && receivedDate !== undefined;
 
+  /*
+   * WHERE THE SLAB IS (28 Oct 2026, change 10). A trip moved the slab out of
+   * the plant and back, and its location never followed: it stayed wherever
+   * QC had left it. Now sending puts it at the External Recalibration
+   * Facility, receiving puts it back in the Incoming Yard, and each move is a
+   * movement in its history — as dispatch, stock and sample cutting do.
+   */
+  const moveTo = async (type: LocationType) =>
+    (await prisma.chromiaLocation.findFirst({ where: { type, isActive: true }, select: { id: true } }))?.id ?? null;
+  const facilityId = isFirstSend || (returning && trip.receivedDate === null) ? await moveTo(LocationType.EXTERNAL_FACILITY) : null;
+  const yardId = returning && trip.receivedDate === null ? await moveTo(LocationType.YARD) : null;
+  const locationId = returning ? (trip.receivedDate === null ? yardId : undefined) : isFirstSend ? facilityId : undefined;
+
   await prisma.$transaction(async (tx) => {
+    // Out on the first send; back on the first receive. A date correction moves nothing.
+    if (isFirstSend && facilityId) {
+      await tx.chromiaSlabMovement.create({
+        data: {
+          slabId: slab.id,
+          fromLocationId: slab.currentLocationId,
+          toLocationId: facilityId,
+          reason: MovementReason.RECALIBRATION_OUT,
+          movedById: userId,
+          movedAt: sentDate,
+        },
+      });
+    }
+    if (returning && trip.receivedDate === null && yardId) {
+      await tx.chromiaSlabMovement.create({
+        data: {
+          slabId: slab.id,
+          fromLocationId: isFirstSend ? facilityId : slab.currentLocationId,
+          toLocationId: yardId,
+          reason: MovementReason.RECALIBRATION_IN,
+          movedById: userId,
+          movedAt: receivedDate,
+        },
+      });
+    }
+
     await tx.chromiaRecalibrationCycle.update({
       where: { id: trip.id },
       data: {
@@ -267,6 +306,7 @@ export async function saveTrip(
           ? SlabStatus.RECEIVED_FROM_RECALIBRATION
           : SlabStatus.OUT_FOR_RECALIBRATION,
         isRecalibrationOut: !returning,
+        ...(locationId !== undefined && locationId !== null ? { currentLocationId: locationId } : {}),
         // The counter moves here and nowhere else.
         ...(isFirstSend ? { recalibrationCount: trip.attemptNumber } : {}),
         updatedById: userId,

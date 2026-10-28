@@ -1,4 +1,6 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
+import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 import {
   addMonths,
   dispatchDateWhere,
@@ -30,7 +32,8 @@ const LIVE = { slab: { deletedAt: null } } as const;
 /** How many distinct slabs have a dispatch matching `where`. */
 async function countDispatchedSlabs(where: Record<string, unknown>): Promise<number> {
   const slabs = await prisma.chromiaDispatch.findMany({
-    where: { ...LIVE, ...where },
+    // Each physical slab once (physical-slabs.ts, change 10).
+    where: { ...LIVE, ...where, slab: await physicalSlabWhere() },
     distinct: ['slabId'],
     select: { slabId: true },
   });
@@ -67,7 +70,7 @@ export async function dispatchedKpis(now: Date = new Date()): Promise<Dispatched
 export async function listDispatchedSlabs(filters: DispatchedFilters, now: Date = new Date()) {
   const dispatches = await prisma.chromiaDispatch.findMany({
     where: {
-      slab: { deletedAt: null, ...dispatchedSlabWhere(filters) },
+      slab: { AND: [await physicalSlabWhere(), dispatchedSlabWhere(filters) as Prisma.ChromiaSlabWhereInput] },
       ...dispatchDateWhere(filters, now),
     },
     distinct: ['slabId'],

@@ -92,8 +92,9 @@ describe('Stockyard page — exactly three sections, in order', () => {
   it('counts Current Stock Available with the very condition the In Stock list uses', () => {
     const repo = read('src/lib/chromia/server/repositories/stockyard-repository.ts');
     expect(repo).toMatch(/const IN_STOCK_NOW = \{ deletedAt: null, status: SlabStatus\.IN_STOCK \} as const;/);
-    expect(repo).toMatch(/where: \{\n\s+\.\.\.IN_STOCK_NOW,/);
-    expect(repo).toMatch(/prisma\.chromiaSlab\.count\(\{ where: IN_STOCK_NOW \}\)/);
+    // Each physical slab once, in the list and the KPI alike (change 10).
+    expect(repo).toMatch(/AND: \[\n\s+await physicalSlabWhere\(\),\n\s+IN_STOCK_NOW,/);
+    expect(repo).toMatch(/prisma\.chromiaSlab\.count\(\{ where: \{ AND: \[physical, IN_STOCK_NOW\] \} \}\)/);
     // The KPIs are never filtered.
     expect(page).toMatch(/stockyardKpis\(\),/);
   });

@@ -113,7 +113,10 @@ export default async function RecalibrationSlabPage({ params }: { params: Promis
           baseMaterial: record.baseMaterial,
           fileName: record.designFileName,
           thicknessCm: record.thicknessCm === null ? '' : String(record.thicknessCm),
-          inTime: record.inTime ? toTimeInput(record.inTime) : '',
+          // Back from a trip, the In-time is the NEW pass's — entered, not the
+          // last pass's carried over (change 10: carried over, an unchanged
+          // save restarted nothing).
+          inTime: stage === 'RETURNED' || !record.inTime ? '' : toTimeInput(record.inTime),
         }}
         qc={{
           grade: record.currentGrade ?? '',

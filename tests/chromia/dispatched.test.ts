@@ -132,7 +132,9 @@ describe('Dispatched page (27 Oct 2026)', () => {
   });
 
   it('counts each dispatched slab once, the same way for the KPIs and the table', () => {
-    expect(repo).toMatch(/async function countDispatchedSlabs[\s\S]{0,200}distinct: \['slabId'\]/);
+    expect(repo).toMatch(/async function countDispatchedSlabs[\s\S]{0,300}distinct: \['slabId'\]/);
+    // Each physical slab once (change 10).
+    expect(repo).toMatch(/where: \{ \.\.\.LIVE, \.\.\.where, slab: await physicalSlabWhere\(\) \},/);
     const list = repo.slice(repo.indexOf('export async function listDispatchedSlabs('));
     expect(list).toMatch(/distinct: \['slabId'\]/);
     expect(repo).toMatch(/countDispatchedSlabs\(\{\}\),/);

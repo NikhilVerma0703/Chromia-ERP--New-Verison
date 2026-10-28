@@ -1,5 +1,6 @@
-import { ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome } from '@prisma/client';
+import { ChromiaSlabStatus as SlabStatus, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
+import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 import type { StockOutcomeValue } from '@/lib/chromia/constants/stock-outcomes';
 import { simpleSlabWhere, type SimpleFilters } from '@/lib/chromia/simple-filters';
 import { stockyardSlabWhere, type StockyardFilters } from '@/lib/chromia/stockyard-filters';
@@ -28,8 +29,11 @@ const IN_STOCK_NOW = { deletedAt: null, status: SlabStatus.IN_STOCK } as const;
 export async function listStockedSlabs(filters?: SimpleFilters | StockyardFilters) {
   const slabs = await prisma.chromiaSlab.findMany({
     where: {
-      ...IN_STOCK_NOW,
-      ...(filters ? ('outcome' in filters ? stockyardSlabWhere(filters) : simpleSlabWhere(filters)) : {}),
+      AND: [
+        await physicalSlabWhere(),
+        IN_STOCK_NOW,
+        (filters ? ('outcome' in filters ? stockyardSlabWhere(filters) : simpleSlabWhere(filters)) : {}) as Prisma.ChromiaSlabWhereInput,
+      ],
     },
     orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
     select: {
@@ -83,10 +87,12 @@ export interface StockyardKpis {
  * Approved Slabs pages show.
  */
 export async function stockyardKpis(): Promise<StockyardKpis> {
-  const at = (status: SlabStatus) => prisma.chromiaSlab.count({ where: { deletedAt: null, status } });
+  // Each physical slab once (physical-slabs.ts, change 10).
+  const physical = await physicalSlabWhere();
+  const at = (status: SlabStatus) => prisma.chromiaSlab.count({ where: { AND: [physical, { status }] } });
   const [totalStock, currentStock, dispatched, approved, sampleCutting] = await Promise.all([
-    prisma.chromiaSlab.count({ where: { deletedAt: null, stockEntries: { some: {} } } }),
-    prisma.chromiaSlab.count({ where: IN_STOCK_NOW }),
+    prisma.chromiaSlab.count({ where: { AND: [physical, { stockEntries: { some: {} } }] } }),
+    prisma.chromiaSlab.count({ where: { AND: [physical, IN_STOCK_NOW] } }),
     at(SlabStatus.DISPATCHED),
     at(SlabStatus.APPROVED),
     at(SlabStatus.SAMPLE_CUT),
@@ -128,52 +134,76 @@ export async function stockyardFilterOptions(): Promise<StockyardFilterOptions> 
   };
 }
 
+/** The slab status each Stock Outcome leaves a slab in. */
+const OUTCOME_STATUS: Record<StockOutcomeValue, SlabStatus> = {
+  DISPATCH: SlabStatus.DISPATCHED,
+  APPROVED: SlabStatus.APPROVED,
+  SAMPLE_CUTTING: SlabStatus.SAMPLE_CUT,
+};
+
 /**
- * Slabs that left stock by one outcome, newest first, narrowed by the rest of
- * the filters — the In Stock Records table when a Stock Outcome is chosen.
- * Read-only: the slab has gone, and the row says where and when.
+ * The slabs counted by a Stock Outcome KPI, newest Production Date first,
+ * narrowed by the rest of the filters — the In Stock Records table when a
+ * Stock Outcome is chosen. Read-only: the slab has gone, and the row says
+ * where and when.
+ *
+ * READ BY STATUS, AS ITS KPI COUNTS (28 Oct 2026, change 10). The list read
+ * the stock entries released by that outcome, and the KPI the slabs in that
+ * status (change 7: from the rack or straight from QC), so a slab dispatched
+ * at QC was in Total Dispatched Slabs and missing from the list under it. Now
+ * both read the same slabs, each physical slab once. The date is the
+ * outcome's own record: the dispatch, the cut, or the approval.
  */
 export async function listStockOutcomeRecords(outcome: StockOutcomeValue, filters: StockyardFilters) {
-  const entries = await prisma.chromiaStockEntry.findMany({
+  const slabs = await prisma.chromiaSlab.findMany({
     where: {
-      releaseOutcome: outcome as StockOutcome,
-      slab: { deletedAt: null, ...stockyardSlabWhere(filters) },
+      AND: [await physicalSlabWhere(), { status: OUTCOME_STATUS[outcome] }, stockyardSlabWhere(filters) as Prisma.ChromiaSlabWhereInput],
     },
-    // Newest Production Date first (28 Oct 2026), then the latest outcome.
-    orderBy: [{ slab: { receivedDate: 'desc' } }, { releasedAt: 'desc' }, { updatedAt: 'desc' }],
+    orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
     select: {
       id: true,
-      stockDate: true,
-      releasedAt: true,
-      releaseOutcome: true,
-      slab: {
-        select: {
-          id: true,
-          slabNo: true,
-          receivedDate: true,
-          currentThicknessMm: true,
-          currentGrade: true,
-          currentDisposition: true,
-          remarks: true,
-          batch: { select: { batchNo: true } },
-          baseMaterial: { select: { name: true } },
-          plannedDesign: { select: { name: true, fileName: true } },
-        },
+      slabNo: true,
+      receivedDate: true,
+      currentThicknessMm: true,
+      currentGrade: true,
+      currentDisposition: true,
+      remarks: true,
+      batch: { select: { batchNo: true } },
+      baseMaterial: { select: { name: true } },
+      plannedDesign: { select: { name: true, fileName: true } },
+      stockEntries: {
+        orderBy: [{ stockDate: 'desc' }, { createdAt: 'desc' }],
+        take: 1,
+        select: { id: true, stockDate: true, releasedAt: true },
       },
+      dispatches: { orderBy: [{ dispatchDate: 'desc' }, { createdAt: 'desc' }], take: 1, select: { dispatchDate: true } },
+      sampleCuttings: { orderBy: [{ cutDate: 'desc' }, { createdAt: 'desc' }], take: 1, select: { cutDate: true } },
     },
   });
 
-  return entries.map(({ slab, ...entry }) => ({
-    ...entry,
-    slabId: slab.id,
-    slabNo: slab.slabNo,
-    receivedDate: slab.receivedDate,
-    thicknessCm: slab.currentThicknessMm === null ? null : Number(slab.currentThicknessMm) / 10,
-    currentGrade: slab.currentGrade,
-    currentDisposition: slab.currentDisposition,
-    remarks: slab.remarks,
-    batch: slab.batch,
-    baseMaterial: slab.baseMaterial,
-    plannedDesign: slab.plannedDesign,
-  }));
+  return slabs.map(({ stockEntries, dispatches, sampleCuttings, currentThicknessMm, ...slab }) => {
+    const entry = stockEntries[0] ?? null;
+    const releasedAt =
+      outcome === 'DISPATCH'
+        ? (dispatches[0]?.dispatchDate ?? null)
+        : outcome === 'SAMPLE_CUTTING'
+          ? (sampleCuttings[0]?.cutDate ?? null)
+          : (entry?.releasedAt ?? null);
+    return {
+      id: slab.id,
+      stockDate: entry?.stockDate ?? null,
+      releasedAt,
+      releaseOutcome: outcome,
+      slabId: slab.id,
+      slabNo: slab.slabNo,
+      receivedDate: slab.receivedDate,
+      thicknessCm: currentThicknessMm === null ? null : Number(currentThicknessMm) / 10,
+      currentGrade: slab.currentGrade,
+      currentDisposition: slab.currentDisposition,
+      remarks: slab.remarks,
+      batch: slab.batch,
+      baseMaterial: slab.baseMaterial,
+      plannedDesign: slab.plannedDesign,
+    };
+  });
 }

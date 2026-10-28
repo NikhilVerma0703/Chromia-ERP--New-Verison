@@ -90,7 +90,8 @@ describe('newest Production Date first, on all five pages', () => {
     expect(read('src/lib/chromia/server/repositories/slab-repository.ts')).toMatch(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/);
     const stock = read('src/lib/chromia/server/repositories/stockyard-repository.ts');
     expect(stock).toMatch(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/);
-    expect(stock).toMatch(/orderBy: \[\{ slab: \{ receivedDate: 'desc' \} \}, \{ releasedAt: 'desc' \}/);
+    // Both Stockyard lists, the rack and each Stock Outcome's, read slabs now (change 10).
+    expect(stock.match(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/g)?.length).toBe(2);
     expect(read('src/lib/chromia/server/repositories/recalibration-flow-repository.ts')).toMatch(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}, \{ id: 'asc' \}\]/);
     for (const path of ['src/lib/chromia/server/repositories/dispatch-repository.ts', 'src/lib/chromia/server/repositories/approved-repository.ts']) {
       expect(read(path), path).toMatch(/\.sort\(\n\s+\(a, b\) =>\n\s+b\.receivedDate\.getTime\(\) - a\.receivedDate\.getTime\(\) \|\|/);

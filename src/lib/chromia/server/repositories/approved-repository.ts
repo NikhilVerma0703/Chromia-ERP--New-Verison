@@ -1,7 +1,8 @@
-import { ChromiaStockOutcome as StockOutcome } from '@prisma/client';
+import { ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome, type Prisma } from '@prisma/client';
 
 import { approvedDateWhere, approvedSlabWhere, type ApprovedFilters } from '@/lib/chromia/approved-filters';
 import { prisma } from '@/lib/chromia/db';
+import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 
 /**
  * Approved Slabs — data access (27 Oct 2026).
@@ -28,7 +29,12 @@ const APPROVED = { releaseOutcome: StockOutcome.APPROVED, slab: { deletedAt: nul
 
 /** Total Approved Slabs — never filtered. */
 export async function approvedKpi(): Promise<number> {
-  const slabs = await prisma.chromiaStockEntry.findMany({ where: APPROVED, distinct: ['slabId'], select: { slabId: true } });
+  // Approved now (its status) and from the rack (its entry), each physical slab once (change 10).
+  const slabs = await prisma.chromiaStockEntry.findMany({
+    where: { releaseOutcome: StockOutcome.APPROVED, slab: { AND: [await physicalSlabWhere(), { status: SlabStatus.APPROVED }] } },
+    distinct: ['slabId'],
+    select: { slabId: true },
+  });
   return slabs.length;
 }
 
@@ -50,7 +56,7 @@ export async function listApprovedSlabs(filters: ApprovedFilters) {
   const entries = await prisma.chromiaStockEntry.findMany({
     where: {
       releaseOutcome: StockOutcome.APPROVED,
-      slab: { deletedAt: null, ...approvedSlabWhere(filters) },
+      slab: { AND: [await physicalSlabWhere(), { status: SlabStatus.APPROVED }, approvedSlabWhere(filters) as Prisma.ChromiaSlabWhereInput] },
       ...approvedDateWhere(filters),
     },
     distinct: ['slabId'],

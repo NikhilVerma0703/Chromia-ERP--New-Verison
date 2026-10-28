@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/chromia/db';
+import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 import type { DateRange } from '@/lib/chromia/reports';
 import { isWithinRangeDays, padRange } from '@/lib/chromia/exports';
 import {
@@ -27,10 +28,14 @@ export async function loadProductionSummary(range: DateRange) {
   const within = padRange(range);
   const onDay = (date: Date | null) => isWithinRangeDays(date, range);
 
+  // Each physical slab once (physical-slabs.ts), and nothing of a deleted
+  // slab — its dispatches, stock entries, cuts and trips included (change 10).
+  const physical = await physicalSlabWhere();
+  const live = { slab: { deletedAt: null } };
   const [cohort, completed, dispatched, stocked, sampleCut, sentForRecalibration] =
     await Promise.all([
       prisma.chromiaSlab.findMany({
-        where: { deletedAt: null, receivedDate: within },
+        where: { AND: [physical, { receivedDate: within }] },
         select: {
           status: true,
           currentDisposition: true,
@@ -41,12 +46,12 @@ export async function loadProductionSummary(range: DateRange) {
         },
       }),
 
-      prisma.chromiaProcessCycle.findMany({ where: { outTime: within }, select: { outTime: true } }),
-      prisma.chromiaDispatch.findMany({ where: { dispatchDate: within }, select: { dispatchDate: true } }),
-      prisma.chromiaStockEntry.findMany({ where: { stockDate: within }, select: { stockDate: true } }),
-      prisma.chromiaSampleCutting.findMany({ where: { cutDate: within }, select: { cutDate: true } }),
+      prisma.chromiaProcessCycle.findMany({ where: { outTime: within, ...live }, select: { outTime: true } }),
+      prisma.chromiaDispatch.findMany({ where: { dispatchDate: within, ...live }, select: { dispatchDate: true } }),
+      prisma.chromiaStockEntry.findMany({ where: { stockDate: within, ...live }, select: { stockDate: true } }),
+      prisma.chromiaSampleCutting.findMany({ where: { cutDate: within, ...live }, select: { cutDate: true } }),
       prisma.chromiaRecalibrationCycle.findMany({
-        where: { sentDate: within },
+        where: { sentDate: within, ...live },
         select: { sentDate: true },
       }),
     ]);

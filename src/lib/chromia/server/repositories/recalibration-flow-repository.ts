@@ -1,5 +1,6 @@
 import { ChromiaDisposition as Disposition, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
+import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 import { pageWindow } from '@/lib/chromia/list-limits';
 import type { TrackedSlab } from '@/lib/chromia/recalibration-kpis';
 import {
@@ -138,7 +139,8 @@ function recalibrationWhere(filters: RecalibrationSearch) {
  */
 export async function searchRecalibrationStates(filters: RecalibrationSearch): Promise<RecalibrationState[]> {
   const matches = await prisma.chromiaSlab.findMany({
-    where: recalibrationWhere(filters),
+    // Each physical slab once (physical-slabs.ts, change 10).
+    where: { AND: [recalibrationWhere(filters), await physicalSlabWhere()] },
     orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
     select: {
       id: true,
@@ -219,7 +221,8 @@ const ON_THE_BOARD: Prisma.ChromiaSlabWhereInput = {
 
 async function boardStates(where: Record<string, unknown>): Promise<BoardSlab[]> {
   const slabs = await prisma.chromiaSlab.findMany({
-    where: { AND: [ON_THE_BOARD, where as Prisma.ChromiaSlabWhereInput] },
+    // Each physical slab once (physical-slabs.ts, change 10).
+    where: { AND: [ON_THE_BOARD, where as Prisma.ChromiaSlabWhereInput, await physicalSlabWhere()] },
     // The board's rows follow its slabs: newest Production Date first
     // (28 Oct 2026; it was the last-touched slab first).
     orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
@@ -253,6 +256,8 @@ export async function loadRecalibrationBoard(
   options: { page: number; pageSize: number },
 ): Promise<{
   kpis: BoardKpis;
+  /** Every slab on the board, as the KPIs counted them — the consistency audit reads it. */
+  states: BoardSlab[];
   rows: BoardRecord[];
   total: number;
   page: number;
@@ -297,7 +302,7 @@ export async function loadRecalibrationBoard(
     ];
   });
 
-  return { kpis, rows, total: all.length, page: cut.page, pages: cut.pages };
+  return { kpis, states: everything, rows, total: all.length, page: cut.page, pages: cut.pages };
 }
 
 export interface BoardRecord {
