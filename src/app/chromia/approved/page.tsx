@@ -59,7 +59,7 @@ export default async function ApprovedSlabsPage({ searchParams }: { searchParams
       <div className="mb-6">
         <SectionCard title="Dashboard" accent="brand" padded>
           <div className="grid gap-4 sm:grid-cols-3">
-            <Stat label="Total Approved Slabs" value={total} hint="Marked as Approved in the Stockyard" tone="done" />
+            <Stat label="Total Approved Slabs" value={total} hint="Marked as Approved in the Stockyard" tone="approved" />
           </div>
         </SectionCard>
       </div>

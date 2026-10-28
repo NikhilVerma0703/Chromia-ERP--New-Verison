@@ -85,8 +85,8 @@ export default async function ApprovedSlabPage({ params }: { params: Promise<{ s
       />
 
       {/* The status, said plainly at the top. */}
-      <div className="border-status-done/40 mb-6 flex flex-wrap items-center gap-3 rounded-xl border bg-[var(--surface-muted)] px-5 py-4">
-        <span className="bg-status-done inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold text-white">
+      <div className="border-status-approved/40 mb-6 flex flex-wrap items-center gap-3 rounded-xl border bg-[var(--surface-muted)] px-5 py-4">
+        <span className="bg-status-approved inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold text-white">
           <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M20 6L9 17l-5-5" />
           </svg>

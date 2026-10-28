@@ -1,3 +1,5 @@
+import { PLACE_COLORS } from '@/lib/chromia/constants/production-places';
+
 /**
  * Chart series identity — the colour each measure wears.
  *
@@ -36,10 +38,10 @@ export const CHART_INK = {
 
 /** Reserved outcome colours — the same values the badges and the pie use. */
 export const OUTCOME_COLORS = {
-  dispatched: '#16a34a',
-  stock: '#327dff',
-  sampleCutting: '#d97706',
-  recalibration: '#9333ea',
+  dispatched: PLACE_COLORS.DISPATCHED,
+  stock: PLACE_COLORS.STOCK,
+  sampleCutting: PLACE_COLORS.SAMPLE_CUTTING,
+  recalibration: PLACE_COLORS.RECALIBRATION,
 } as const;
 
 /**

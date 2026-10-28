@@ -40,6 +40,11 @@ const config: Config = {
           hold: "#d97706",
           recalibration: "#9333ea",
           waste: "#dc2626",
+          // The rest of the six production places (27 Oct 2026) — the values
+          // of lib/chromia/constants/production-places.ts.
+          stock: "#327dff",
+          approved: "#0f766e",
+          processing: "#64748b",
         },
       },
       borderRadius: {

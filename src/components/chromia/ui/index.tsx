@@ -94,7 +94,22 @@ export function Section({
 
 // ------------------------------------------------------------------ badge ---
 
-export type Tone = 'neutral' | 'active' | 'hold' | 'done' | 'recalibration' | 'waste';
+/**
+ * `stock`, `approved` and `processing` complete the six production places
+ * (lib/chromia/constants/production-places.ts): Current Stock, Dispatched
+ * (`done`), Approved, Sample Cutting (`hold`), Recalibration and In-Processing
+ * each wear one colour across the ERP.
+ */
+export type Tone =
+  | 'neutral'
+  | 'active'
+  | 'hold'
+  | 'done'
+  | 'recalibration'
+  | 'waste'
+  | 'stock'
+  | 'approved'
+  | 'processing';
 
 const TONE_CLASS: Record<Tone, string> = {
   neutral: 'text-muted bg-[color-mix(in_srgb,var(--muted)_12%,transparent)]',
@@ -104,6 +119,9 @@ const TONE_CLASS: Record<Tone, string> = {
   recalibration:
     'text-status-recalibration bg-[color-mix(in_srgb,var(--color-status-recalibration)_13%,transparent)]',
   waste: 'text-status-waste bg-[color-mix(in_srgb,var(--color-status-waste)_12%,transparent)]',
+  stock: 'text-status-stock bg-[color-mix(in_srgb,var(--color-status-stock)_13%,transparent)]',
+  approved: 'text-status-approved bg-[color-mix(in_srgb,var(--color-status-approved)_13%,transparent)]',
+  processing: 'text-status-processing bg-[color-mix(in_srgb,var(--color-status-processing)_13%,transparent)]',
 };
 
 const TONE_DOT: Record<Tone, string> = {
@@ -113,6 +131,9 @@ const TONE_DOT: Record<Tone, string> = {
   done: 'bg-status-done',
   recalibration: 'bg-status-recalibration',
   waste: 'bg-status-waste',
+  stock: 'bg-status-stock',
+  approved: 'bg-status-approved',
+  processing: 'bg-status-processing',
 };
 
 /** A status pill. Always carries its own text — never colour alone. */

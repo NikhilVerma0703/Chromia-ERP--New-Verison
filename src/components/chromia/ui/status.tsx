@@ -10,10 +10,13 @@ const GRADE_TONE: Record<SlabGrade, Tone> = {
   C: 'waste',
 };
 
-/** One colour per outcome — no two share a tone, so the list stays scannable. */
+/**
+ * One colour per outcome — no two share a tone, so the list stays scannable —
+ * and each the colour of the place it sends the slab to (production-places.ts).
+ */
 const DISPOSITION_TONE: Record<Disposition, Tone> = {
   DISPATCH: 'done', // green
-  STOCK: 'active', // blue
+  STOCK: 'stock', // blue
   SAMPLE_CUTTING: 'hold', // amber
   RECALIBRATION: 'recalibration', // violet
   WASTE: 'waste', // red

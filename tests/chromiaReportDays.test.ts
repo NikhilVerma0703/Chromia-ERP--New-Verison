@@ -50,8 +50,7 @@ import {
 } from "../src/lib/chromia/exports.ts";
 import { buildDailyActivity } from "../src/lib/chromia/production-summary.ts";
 import { dayKey, defaultRange, parseRange } from "../src/lib/chromia/reports.ts";
-import { buildOutcomeSplit, countFromDay, fromDay, outcomeKeyOf } from "../src/lib/chromia/dashboard-live.ts";
-import { buildOverallTiles, inPlantNow } from "../src/lib/chromia/dashboard-totals.ts";
+import { onDay, overallProduction, todayProduction } from "../src/lib/chromia/production-overview.ts";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
@@ -200,56 +199,53 @@ test("CHR-8: the Summary's period is plant days, defaulting to the 30 ending tod
 
 // ── the dashboard ───────────────────────────────────────────────────────────
 
-test("CHR-3: twenty slabs in the Dispatch queue are in the plant, not dispatched", () => {
-  const groups = [
-    { currentDisposition: "DISPATCH" as const, status: "DISPATCHED", n: 5 },
-    { currentDisposition: "DISPATCH" as const, status: "GRADED", n: 20 },
-    { currentDisposition: "RECALIBRATION" as const, status: "WASTE", n: 2 },
-    { currentDisposition: "RECALIBRATION" as const, status: "OUT_FOR_RECALIBRATION", n: 3 },
-    { currentDisposition: null, status: "IN_PROCESS", n: 10 },
+// Rebuilt 27 Oct 2026 (the Main Production Dashboard): today is today's date
+// in IST, and every place is read from the slab's status.
+
+test("the dashboard: a slab graded for dispatch but not yet sent is not dispatched", () => {
+  const slab = (status: string, currentDisposition: string | null, n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `${status}-${i}`,
+      slabNo: `${status}-${i}0`,
+      status,
+      currentDisposition,
+      currentGrade: null,
+      receivedDate: TYPED_1_NOV,
+      createdAt: TYPED_1_NOV,
+    }));
+  const all = [
+    ...slab("DISPATCHED", "DISPATCH", 5),
+    ...slab("GRADED", "DISPATCH", 20),
+    ...slab("WASTE", "RECALIBRATION", 2),
+    ...slab("OUT_FOR_RECALIBRATION", "RECALIBRATION", 3),
+    ...slab("IN_PROCESS", null, 10),
   ];
-  const outcomes: Record<string, number> = {};
-  for (const g of groups) {
-    const key = outcomeKeyOf(g);
-    outcomes[key] = (outcomes[key] ?? 0) + g.n;
-  }
-  assert.deepEqual(outcomes, { DISPATCH: 5, AWAITING_DISPATCH: 20, WASTE: 2, RECALIBRATION: 3, IN_PROCESSING: 10 });
-  // In the plant: 40 received, less 5 actually dispatched and 2 written off.
-  assert.equal(inPlantNow({ received: 40, dispatched: outcomes.DISPATCH ?? 0, writtenOff: 2 }), 33);
-  const tiles = buildOverallTiles({
-    received: 40,
-    dispatched: outcomes.DISPATCH ?? 0,
-    writtenOff: 2,
-    inProcessing: outcomes.IN_PROCESSING ?? 0,
-    qcDone: 30,
-    stocked: 0,
-    sampleCut: 0,
-    recalibration: outcomes.RECALIBRATION ?? 0,
-  });
-  assert.equal(tiles.find((t) => t.key === "dispatched")?.value, 5);
-  assert.equal(tiles.find((t) => t.key === "recalibration")?.value, 3);
-  // The bar reads the same grouping, so it agrees with the tiles — and shows the queue.
-  const split = buildOutcomeSplit(outcomes);
-  assert.equal(split.find((s) => s.label === "Dispatched")?.count, 5);
-  assert.equal(split.find((s) => s.label === "Awaiting dispatch")?.count, 20);
-  assert.equal(split.find((s) => s.label === "Recalibration")?.count, 3);
-  assert.equal(split.find((s) => s.label === "Waste")?.count, 2);
+  const overall = overallProduction(all);
+  assert.equal(overall.produced, 40);
+  assert.equal(overall.dispatched, 5);
+  // Written off after the last attempt counts under Recalibration.
+  assert.equal(overall.places.RECALIBRATION, 5);
+  assert.equal(overall.inProcessing, 30);
 });
 
-test("CHR-8: the dashboard's today is the production day, and a typed day counts on itself", () => {
-  const today = plantToday(STOCKED_AT_0130); // 31 Oct, at 01:30 on 1 Nov
-  assert.equal(today, "2026-10-31");
-  assert.equal(countFromDay([STOCKED_AT_0130, plantInstant(2026, 10, 31, 5, 0), new Date(Date.UTC(2026, 9, 31)), null], today), 2);
-  assert.deepEqual(fromDay([{ at: plantInstant(2026, 10, 31, 7, 0) }, { at: plantInstant(2026, 10, 30, 23, 0) }], (r) => r.at, today).length, 1);
+test("the dashboard's today is the IST date, and a typed day counts on itself", () => {
+  // 01:30 IST on 1 Nov is 1 Nov on this dashboard, not the 31 Oct production day.
+  assert.equal(onDay(TYPED_1_NOV, "2026-11-01"), true);
+  assert.equal(onDay(TYPED_1_NOV_IST_HOST, "2026-11-01"), true);
+  assert.equal(onDay(STOCKED_AT_0130, "2026-11-01"), true);
+  assert.equal(onDay(plantInstant(2026, 10, 31, 23, 0), "2026-11-01"), false);
+  const today = todayProduction(
+    { slabs: [], dispatchedToday: ["9001", "9001", "9002-A", "9002"], approvedToday: [], sampleCutFromStockToday: [] },
+    "2026-11-01",
+  );
+  assert.equal(today.dispatched, 2, "each slab once, 9002 and 9002-A the same slab");
 });
 
-test("CHR-3 / CHR-8: the dashboard reads dispatched-today from dispatch records, and today from the plant's clock", () => {
+test("the dashboard reads the day's Stockyard work by the date it was given", () => {
   const repo = read("src/lib/chromia/server/repositories/dashboard-repository.ts");
-  assert.match(repo, /const today = plantToday\(\);\n\s+const since = plantDayStart\(today\);/);
-  assert.match(repo, /prisma\.chromiaDispatch\.findMany\(\{\n\s+where: \{ dispatchDate: \{ gte: since \}, slab: \{ deletedAt: null \} \},/);
-  assert.match(repo, /dispatched: countFromDay\(dispatchedSince\.map\(\(dispatch\) => dispatch\.dispatchDate\), today\),/);
-  assert.match(repo, /const key = outcomeKeyOf\(row\);/);
-  assert.doesNotMatch(repo, /dispositionToday\('DISPATCH'\)/);
+  assert.match(repo, /const today = toPlantDateInput\(now\);/);
+  assert.match(repo, /prisma\.chromiaDispatch\.findMany\(\{\n\s+where: \{ dispatchDate: onToday, slab: \{ deletedAt: null \} \},/);
+  assert.match(repo, /releaseOutcome: StockOutcome\.APPROVED, releasedAt: onToday/);
   assert.doesNotMatch(repo, /getFullYear|setHours|startOfToday/);
 });
 

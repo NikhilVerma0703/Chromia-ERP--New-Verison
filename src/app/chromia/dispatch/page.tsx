@@ -88,13 +88,13 @@ export default async function DispatchedPage({
               label="Current Month Dispatched Slabs"
               value={kpis.currentMonth}
               hint={monthLabel(thisMonth)}
-              tone="active"
+              tone="done"
             />
             <Stat
               label="Previous Month Dispatched Slabs"
               value={kpis.previousMonth}
               hint={monthLabel(months[1] ?? thisMonth)}
-              tone="neutral"
+              tone="done"
             />
           </div>
         </SectionCard>

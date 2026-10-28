@@ -134,12 +134,12 @@ export default async function StockyardPage({
         <SectionCard title="Dashboard" accent="brand" padded>
           <div className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Stat label="Total Stock Slabs" value={kpis.totalStock} hint="Every slab that has entered stock" tone="active" />
-              <Stat label="Current Stock Available" value={kpis.currentStock} hint="On the racks now" tone="neutral" />
+              <Stat label="Total Stock Slabs" value={kpis.totalStock} hint="Every slab that has entered stock" tone="stock" />
+              <Stat label="Current Stock Available" value={kpis.currentStock} hint="On the racks now" tone="stock" />
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <Stat label="Total Dispatched Slabs" value={kpis.dispatched} tone="done" />
-              <Stat label="Total Approved Slabs" value={kpis.approved} tone="done" />
+              <Stat label="Total Approved Slabs" value={kpis.approved} tone="approved" />
               <Stat label="Total Sample Cutting Slabs" value={kpis.sampleCutting} tone="hold" />
             </div>
           </div>

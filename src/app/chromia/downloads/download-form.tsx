@@ -26,7 +26,7 @@ interface Props {
 
 const KIND_ACCENT: Record<ExportKind, string> = {
   DISPATCH: 'peer-checked:border-status-done peer-checked:text-status-done',
-  STOCK: 'peer-checked:border-status-active peer-checked:text-status-active',
+  STOCK: 'peer-checked:border-status-stock peer-checked:text-status-stock',
   SAMPLE_CUTTING: 'peer-checked:border-status-hold peer-checked:text-status-hold',
   RECALIBRATION:
     'peer-checked:border-status-recalibration peer-checked:text-status-recalibration',

@@ -281,11 +281,11 @@ export default async function OperatorPage({
                         title={row.pendingQc ? 'QC pending — open to finish its QC Report' : undefined}
                         className={
                           row.pendingQc
-                            ? 'text-status-hold inline-flex items-center gap-1.5 font-mono font-semibold underline decoration-dotted underline-offset-4'
+                            ? 'text-status-processing inline-flex items-center gap-1.5 font-mono font-semibold underline decoration-dotted underline-offset-4'
                             : `${link} font-mono`
                         }
                       >
-                        {row.pendingQc ? <span aria-hidden className="bg-status-hold inline-block size-1.5 rounded-full" /> : null}
+                        {row.pendingQc ? <span aria-hidden className="bg-status-processing inline-block size-1.5 rounded-full" /> : null}
                         {row.slabNo}
                       </Link>
                     </td>
@@ -302,7 +302,7 @@ export default async function OperatorPage({
                     </td>
                     <td className={td}>
                       {row.pendingQc ? (
-                        <span className="text-status-hold text-sm font-medium whitespace-nowrap">In-Processing</span>
+                        <span className="text-status-processing text-sm font-semibold whitespace-nowrap">In-Processing</span>
                       ) : (
                         <DispositionBadge disposition={row.currentDisposition} />
                       )}

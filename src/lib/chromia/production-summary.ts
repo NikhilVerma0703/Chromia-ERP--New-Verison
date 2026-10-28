@@ -1,5 +1,6 @@
 import { ChromiaDisposition as Disposition, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
 
+import { PLACE_COLORS } from './constants/production-places.ts';
 import { toPlantReportDay } from './plant-time.ts';
 
 /**
@@ -121,14 +122,15 @@ export interface OutcomeSlice {
  * outcome yet are deliberately grey and last — an absence, not a category.
  */
 const OUTCOME_ORDER: { key: Disposition; label: string; color: string }[] = [
-  { key: Disposition.DISPATCH, label: 'Dispatched', color: '#16a34a' },
-  { key: Disposition.STOCK, label: 'Stock', color: '#327dff' },
-  { key: Disposition.SAMPLE_CUTTING, label: 'Sample cutting', color: '#d97706' },
-  { key: Disposition.RECALIBRATION, label: 'Recalibration', color: '#9333ea' },
+  { key: Disposition.DISPATCH, label: 'Dispatched', color: PLACE_COLORS.DISPATCHED },
+  { key: Disposition.STOCK, label: 'Stock', color: PLACE_COLORS.STOCK },
+  { key: Disposition.SAMPLE_CUTTING, label: 'Sample cutting', color: PLACE_COLORS.SAMPLE_CUTTING },
+  { key: Disposition.RECALIBRATION, label: 'Recalibration', color: PLACE_COLORS.RECALIBRATION },
   { key: Disposition.WASTE, label: 'Waste', color: '#dc2626' },
 ];
 
-export const UNDECIDED_COLOR = '#94a3b8';
+/** Not decided yet: the In-Processing colour. */
+export const UNDECIDED_COLOR = PLACE_COLORS.IN_PROCESSING;
 
 export function buildOutcomeMix(slabs: readonly SummarySlab[]): OutcomeSlice[] {
   const total = slabs.length;

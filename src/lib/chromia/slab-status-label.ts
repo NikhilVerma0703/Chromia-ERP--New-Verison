@@ -21,18 +21,20 @@ import type { Tone } from '@/components/chromia/ui';
  */
 
 const STATUS_TONE: Record<SlabStatusType, Tone> = {
-  RECEIVED: 'neutral',
-  IN_PROCESS: 'active',
-  UNDER_INSPECTION: 'hold',
-  GRADED: 'neutral',
+  // Each status wears the colour of the production place it puts the slab in
+  // (lib/chromia/constants/production-places.ts, 27 Oct 2026).
+  RECEIVED: 'processing',
+  IN_PROCESS: 'processing',
+  UNDER_INSPECTION: 'processing',
+  GRADED: 'processing',
   OUT_FOR_RECALIBRATION: 'recalibration',
-  RECEIVED_FROM_RECALIBRATION: 'hold',
-  IN_STOCK: 'neutral',
-  SAMPLE_CUT: 'neutral',
+  RECEIVED_FROM_RECALIBRATION: 'recalibration',
+  IN_STOCK: 'stock',
+  SAMPLE_CUT: 'hold',
   DISPATCHED: 'done',
   WASTE: 'waste',
-  ON_HOLD: 'hold',
-  APPROVED: 'done',
+  ON_HOLD: 'processing',
+  APPROVED: 'approved',
 };
 
 export interface StatusView {

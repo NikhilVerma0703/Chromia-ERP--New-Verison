@@ -71,21 +71,24 @@ export interface StockyardKpis {
 }
 
 /**
- * The Stockyard Dashboard, counted from the stock entries themselves — always
- * the whole yard, never the filters. Each figure counts SLABS (a slab stocked
- * twice is one slab). Total = Current + Dispatched + Approved + Sample Cutting,
- * except for a slab that left stock some other way before 27 Oct 2026 (sent
- * for recalibration from the rack), which is in the total only.
+ * The Stockyard Dashboard — always the whole yard, never the filters. Each
+ * figure counts SLABS (a slab stocked twice is one slab).
+ *
+ * Total Stock and Current Stock are the yard's own: every slab that has ever
+ * entered stock, and those on the racks now. Dispatched, Approved and Sample
+ * Cutting count every slab there, by its status, however it got there — from
+ * the rack or straight from QC (the owner's decision of 27 Oct 2026, with the
+ * Main Production Dashboard): the same figures the Dashboard, Dispatched and
+ * Approved Slabs pages show.
  */
 export async function stockyardKpis(): Promise<StockyardKpis> {
-  const left = (outcome: StockOutcome) =>
-    prisma.chromiaSlab.count({ where: { deletedAt: null, stockEntries: { some: { releaseOutcome: outcome } } } });
+  const at = (status: SlabStatus) => prisma.chromiaSlab.count({ where: { deletedAt: null, status } });
   const [totalStock, currentStock, dispatched, approved, sampleCutting] = await Promise.all([
     prisma.chromiaSlab.count({ where: { deletedAt: null, stockEntries: { some: {} } } }),
     prisma.chromiaSlab.count({ where: IN_STOCK_NOW }),
-    left(StockOutcome.DISPATCH),
-    left(StockOutcome.APPROVED),
-    left(StockOutcome.SAMPLE_CUTTING),
+    at(SlabStatus.DISPATCHED),
+    at(SlabStatus.APPROVED),
+    at(SlabStatus.SAMPLE_CUT),
   ]);
   return { totalStock, currentStock, dispatched, approved, sampleCutting };
 }

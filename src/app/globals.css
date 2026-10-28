@@ -109,6 +109,10 @@ body {
   --color-status-hold: #d97706;
   --color-status-recalibration: #9333ea;
   --color-status-waste: #dc2626;
+  /* The rest of the six production places (lib/chromia/constants/production-places.ts). */
+  --color-status-stock: #327dff;
+  --color-status-approved: #0f766e;
+  --color-status-processing: #64748b;
 
   /* Surfaces and rules. */
   --background: var(--bg);

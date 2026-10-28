@@ -59,7 +59,7 @@ test("Recent Slabs Entry: no Status, Grade after In-time, QC Outcome, Slab Remar
   assert.doesNotMatch(PAGE, /StatusBadge|<th className=\{th\}>Status<\/th>/);
   assert.match(PAGE, /In-time<\/th>\n\s+<th className=\{th\}>Grade<\/th>\n\s+<th className=\{th\}>QC Outcome<\/th>\n\s+<th className=\{th\}>Slab Remarks<\/th>/);
   // Pending QC reads In-Processing, and its slab number is marked.
-  assert.match(PAGE, /row\.pendingQc \? \(\n\s+<span className="text-status-hold[^"]*">In-Processing<\/span>/);
+  assert.match(PAGE, /row\.pendingQc \? \(\n\s+<span className="text-status-processing[^"]*">In-Processing<\/span>/);
   assert.match(PAGE, /hourCycle: 'h23', timeZone: PLANT_TIME_ZONE/);
 });
 

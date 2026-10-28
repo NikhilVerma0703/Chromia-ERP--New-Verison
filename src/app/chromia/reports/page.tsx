@@ -114,9 +114,9 @@ export default async function ReportsPage({
             </h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Stat label="Slabs produced" value={headline.received} tone="active" />
-              <Stat label="Still in process" value={headline.inProcess} tone="neutral" />
+              <Stat label="Still in process" value={headline.inProcess} tone="processing" />
               <Stat label="Dispatched" value={headline.dispatched} tone="done" />
-              <Stat label="Stock" value={headline.stocked} tone="active" />
+              <Stat label="Stock" value={headline.stocked} tone="stock" />
               <Stat label="Sample cutting" value={headline.sampleCut} tone="hold" />
               <Stat label="Recalibration" value={headline.recalibrated} tone="recalibration" />
             </div>
