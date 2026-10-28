@@ -75,18 +75,11 @@ test("the rest of the module is untouched: QC and its Edit, dispatch, the stocky
   }
 });
 
-test("Slab Records shows Delete only to an admin, by the same rule; Edit stays on every row", () => {
+test("Slab Records shows Edit only — the Delete button is gone (28 Oct 2026); the delete action stays an admin's", () => {
   const page = read("src/app/chromia/slabs/page.tsx");
-  assert.match(page, /const user = await requirePageUser\(\);/);
-  assert.match(page, /const canDelete = chromiaCanManage\(user\);/);
-  assert.match(page, /canDelete=\{canDelete\}/);
-  const row = read("src/app/chromia/slabs/row-actions.tsx");
-  assert.match(row, /canDelete = false,/, "hidden unless the page says otherwise");
-  const gate = row.indexOf("{canDelete ? (");
-  assert.ok(gate > 0);
-  assert.ok(row.indexOf("aria-label={`Delete slab ${slabNo}`}") > gate, "the Delete button sits inside the gate");
-  assert.ok(row.indexOf("<ConfirmDialog") > gate, "and so does its dialog");
-  assert.ok(row.indexOf("aria-label={`Edit slab ${slabNo}`}") < gate, "Edit does not");
+  assert.match(page, /await requirePageUser\(\);/);
+  assert.doesNotMatch(page, /canDelete|RowActions|ConfirmDialog|deleteSlabRecordAction/);
+  assert.match(page, /<EditLink\n\s+href=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1&back=/);
 });
 
 test("Import shows the form and the Delete buttons only to an admin; everyone else still sees the history", () => {

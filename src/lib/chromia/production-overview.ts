@@ -35,7 +35,7 @@ export interface OverviewSlab {
  * Each slab once — the latest of its records (the later entry; on a tie the
  * suffixed number, which can only have been entered after the plain one).
  */
-export function latestPerSlab<T extends OverviewSlab>(slabs: readonly T[]): T[] {
+export function latestPerSlab<T extends Pick<OverviewSlab, 'slabNo' | 'createdAt'>>(slabs: readonly T[]): T[] {
   const latest = new Map<string, T>();
   for (const slab of slabs) {
     const key = sameSlabNo(slab.slabNo);
@@ -49,6 +49,24 @@ export function latestPerSlab<T extends OverviewSlab>(slabs: readonly T[]): T[] 
     }
   }
   return [...latest.values()];
+}
+
+/**
+ * The records that are NOT a slab's latest — the earlier entries of a slab
+ * entered again — each with the latest record's id. Slab Records leaves these
+ * out of its rows and its count (28 Oct 2026), so it lists exactly the slabs
+ * Total Produced counts, and shows each one's earlier numbers on its row.
+ */
+export function earlierEntries<T extends Pick<OverviewSlab, 'id' | 'slabNo' | 'createdAt'>>(
+  slabs: readonly T[],
+): Map<string, { latestId: string; slabNo: string }> {
+  const latest = new Map(latestPerSlab(slabs).map((slab) => [sameSlabNo(slab.slabNo), slab.id]));
+  const earlier = new Map<string, { latestId: string; slabNo: string }>();
+  for (const slab of slabs) {
+    const latestId = latest.get(sameSlabNo(slab.slabNo));
+    if (latestId && latestId !== slab.id) earlier.set(slab.id, { latestId, slabNo: slab.slabNo });
+  }
+  return earlier;
 }
 
 export type PlaceCounts = Record<ProductionPlace, number>;

@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
 import { WHOLE_RANGE_ROW_CAP } from '@/lib/chromia/list-limits';
+import { earlierEntries } from '@/lib/chromia/production-overview';
 import { buildSlabWhere, type SlabFilters } from '@/lib/chromia/slab-filters';
 
 /**
@@ -16,7 +17,27 @@ import { buildSlabWhere, type SlabFilters } from '@/lib/chromia/slab-filters';
  * of 20 Oct 2026, CHR-10). Everything else pages.
  */
 export async function searchSlabs(filters: SlabFilters, options: { wholeRange?: boolean } = {}) {
-  const where = buildSlabWhere(filters) as Prisma.ChromiaSlabWhereInput;
+  /*
+   * ONE ROW PER PHYSICAL SLAB (28 Oct 2026). A slab entered again carries a
+   * letter — 14567, then 14567-A — and both were rows, so Slab Records counted
+   * more slabs than were made. The earlier entries are left out of the rows
+   * and the count by the rule the dashboard's Total Produced counts with
+   * (production-overview: sameSlabNo, latest record wins), so the unfiltered
+   * total IS Total Produced. Nothing is deleted: each row names its earlier
+   * numbers, and their records and history stay as they were.
+   */
+  const live = await prisma.chromiaSlab.findMany({
+    where: { deletedAt: null },
+    select: { id: true, slabNo: true, createdAt: true },
+  });
+  const earlier = earlierEntries(live);
+  const filterWhere = buildSlabWhere(filters) as Prisma.ChromiaSlabWhereInput;
+  const where: Prisma.ChromiaSlabWhereInput =
+    earlier.size === 0 ? filterWhere : { AND: [filterWhere, { id: { notIn: [...earlier.keys()] } }] };
+  const earlierNos = new Map<string, string[]>();
+  for (const { latestId, slabNo } of earlier.values()) {
+    earlierNos.set(latestId, [...(earlierNos.get(latestId) ?? []), slabNo]);
+  }
 
   const pageArgs: { skip?: number; take: number } = options.wholeRange
     ? { take: WHOLE_RANGE_ROW_CAP }
@@ -48,6 +69,11 @@ export async function searchSlabs(filters: SlabFilters, options: { wholeRange?: 
           take: 1,
           select: { inTime: true, outTime: true, fullyPrintedDate: true },
         },
+        // Its trips, for the Current Status the Recalibration page would give it.
+        recalibrations: {
+          orderBy: { attemptNumber: 'asc' },
+          select: { attemptNumber: true, sentDate: true, receivedDate: true, restartedAt: true },
+        },
       },
     }),
     prisma.chromiaSlab.count({ where }),
@@ -63,6 +89,8 @@ export async function searchSlabs(filters: SlabFilters, options: { wholeRange?: 
       inTime: cycles[0]?.inTime ?? null,
       outTime: cycles[0]?.outTime ?? null,
       fullyPrintedDate: cycles[0]?.fullyPrintedDate ?? null,
+      /** The slab's earlier entries (14567 for 14567-A), oldest number first. */
+      earlierSlabNos: (earlierNos.get(slab.id) ?? []).sort((a, b) => a.length - b.length || a.localeCompare(b)),
     })),
   };
 }

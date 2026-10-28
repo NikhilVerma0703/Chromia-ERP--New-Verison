@@ -26,7 +26,7 @@ describe('the Action column (28 Oct 2026)', () => {
     expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/<EditLink href=\{`\$\{APP_ROUTES\.stockyard\}\/\$\{row\.slabId\}\/edit`\}/);
     expect(read('src/app/chromia/approved/page.tsx')).toMatch(/<EditLink href=\{`\$\{open\}\/edit`\}/);
     expect(read('src/app/chromia/recalibrations/page.tsx')).toMatch(/<EditLink href=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{row\.slabId\}`\}/);
-    expect(read('src/app/chromia/slabs/row-actions.tsx')).toMatch(/href=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slabId\}&edit=1/);
+    expect(read('src/app/chromia/slabs/page.tsx')).toMatch(/href=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1/);
   });
 
   it('Dispatched stays read-only: no Action column, no Edit', () => {

@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { EmptyState, PageHeader } from '@/components/chromia/ui';
+import { Badge, EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { SlabNo } from '@/components/chromia/ui/slab-no';
-import { DispositionBadge, GradeBadge, StatusBadge } from '@/components/chromia/ui/status';
-import { chromiaCanManage } from '@/lib/chromia/access';
+import { EditLink } from '@/components/chromia/ui/edit-link';
+import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
+import { currentStatusOf } from '@/lib/chromia/current-status';
 import {
   buildQuery,
   hasActiveFilters,
@@ -20,7 +21,6 @@ import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { requirePageUser } from '@/lib/pageUser';
 
 import { FilterBar } from './filter-bar';
-import { RowActions } from './row-actions';
 
 export const metadata: Metadata = { title: 'Slab Records' };
 export const dynamic = 'force-dynamic';
@@ -49,11 +49,7 @@ export default async function SlabsPage({
   // Signed in, or no further, on every visit: the module layout's gate is
   // not run again when the browser moves between this module's pages
   // (requirePageUser in lib/pageUser.ts says why).
-  const user = await requirePageUser();
-  // Delete is an admin's (CHR-4, the code review of 20 Oct 2026): the same
-  // rule deleteSlabRecordAction enforces, so no row offers a button that the
-  // action would refuse.
-  const canDelete = chromiaCanManage(user);
+  await requirePageUser();
   const filters = parseSlabFilters(await searchParams);
   const filtered = hasActiveFilters(filters);
 
@@ -142,16 +138,18 @@ export default async function SlabsPage({
                     <th className={th}>Base Material / Slab Name</th>
                     <th className={th}>File Name / Planned Design</th>
                     <th className={`${th} text-right`}>Thickness (cm)</th>
-                    <th className={th}>In-time</th>
-                    <th className={th}>Status</th>
-                    <th className={th}>Outcome</th>
+                    <th className={th}>In-Time</th>
                     <th className={th}>Grade</th>
+                    <th className={th}>QC Outcome</th>
+                    <th className={th}>Current Status</th>
                     <th className={th}>Slab Remarks</th>
                     <th className={`${th} text-right`}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((slab) => (
+                  {rows.map((slab) => {
+                    const current = currentStatusOf(slab, slab.recalibrations);
+                    return (
                     <tr key={slab.id} className={dataTable.row}>
                       <td className={`${td} font-medium whitespace-nowrap`}>
                         {dateFmt.format(slab.receivedDate)}
@@ -159,6 +157,11 @@ export default async function SlabsPage({
                       <td className={`${tdMuted} font-mono`}>{slab.batch.batchNo}</td>
                       <td className={td}>
                         <SlabNo id={slab.id} status={slab.status} slabNo={slab.slabNo} back={backTo} />
+                        {slab.earlierSlabNos.length > 0 ? (
+                          <p className="text-muted mt-1 text-xs whitespace-nowrap" title="Earlier entries of this slab — counted once">
+                            also entered as {slab.earlierSlabNos.join(', ')}
+                          </p>
+                        ) : null}
                       </td>
                       <td className={td}>{slab.baseMaterial.name}</td>
                       <td className={tdMuted}>
@@ -171,13 +174,13 @@ export default async function SlabsPage({
                         {slab.inTime ? dateTimeFmt.format(slab.inTime) : '—'}
                       </td>
                       <td className={td}>
-                        <StatusBadge status={slab.status} disposition={slab.currentDisposition} />
+                        <GradeBadge grade={slab.currentGrade} />
                       </td>
                       <td className={td}>
                         <DispositionBadge disposition={slab.currentDisposition} />
                       </td>
                       <td className={td}>
-                        <GradeBadge grade={slab.currentGrade} />
+                        <Badge tone={current.tone}>{current.label}</Badge>
                       </td>
                       <td
                         className={`${tdMuted} max-w-[16rem] truncate`}
@@ -186,15 +189,15 @@ export default async function SlabsPage({
                         {slab.remarks ?? '—'}
                       </td>
                       <td className={`${td} text-right`}>
-                        <RowActions
-                          slabId={slab.id}
+                        {/* Edit only (28 Oct 2026): the Delete button is gone. */}
+                        <EditLink
+                          href={`${APP_ROUTES.operator}?slab=${slab.id}&edit=1&back=${encodeURIComponent(backTo)}`}
                           slabNo={slab.slabNo}
-                          back={backTo}
-                          canDelete={canDelete}
                         />
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
