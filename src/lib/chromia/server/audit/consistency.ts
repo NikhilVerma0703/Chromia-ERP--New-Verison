@@ -16,6 +16,8 @@ import {
   searchRecalibrationStates,
 } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
 import { searchSlabs } from '@/lib/chromia/server/repositories/slab-repository';
+import { loadReportCharts } from '@/lib/chromia/server/repositories/report-repository';
+import { parseTrendRange } from '@/lib/chromia/reports-charts';
 import {
   listStockedSlabs,
   listStockOutcomeRecords,
@@ -73,6 +75,19 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   // ── Produced ──────────────────────────────────────────────────────────
   same('Slab Records total = Dashboard Total Produced', overall.produced, records.total);
   same('Palette sums to Total Produced', overall.produced, PRODUCTION_PLACES.reduce((n, p) => n + overall.places[p], 0));
+
+  // ── Reports (change 11) ───────────────────────────────────────────────
+  const reports = await loadReportCharts(parseTrendRange({ range: '30d' }, now));
+  const slice = (place: string) => reports.distribution.find((s) => s.place === place)?.count ?? -1;
+  same('Reports designs add up to Total Produced', overall.produced, reports.designs.reduce((n, d) => n + d.total, 0));
+  same('Reports design-wise segments add up to Total Produced', overall.produced, reports.designs.reduce((n, d) => n + PRODUCTION_PLACES.reduce((m, p) => m + d.places[p], 0), 0));
+  same('Reports donut Current Stock = Dashboard', overall.currentStock, slice('STOCK'));
+  same('Reports donut Dispatched = Dashboard', overall.dispatched, slice('DISPATCHED'));
+  same('Reports donut Approved = Dashboard', overall.approved, slice('APPROVED'));
+  same('Reports donut Sample Cutting = Dashboard', overall.sampleCutting, slice('SAMPLE_CUTTING'));
+  for (const place of PRODUCTION_PLACES) {
+    same(`Reports design-wise ${place} = Dashboard palette`, overall.places[place], reports.designs.reduce((n, d) => n + d.places[place], 0));
+  }
 
   // ── Current Stock ─────────────────────────────────────────────────────
   same('Stockyard Current Stock = In Stock Records rows', yard.currentStock, inStock.length);

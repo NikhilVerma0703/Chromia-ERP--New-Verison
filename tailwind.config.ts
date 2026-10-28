@@ -43,7 +43,7 @@ const config: Config = {
           // The rest of the six production places (27 Oct 2026) — the values
           // of lib/chromia/constants/production-places.ts.
           stock: "#327dff",
-          approved: "#0f766e",
+          approved: "#0891b2",
           processing: "#64748b",
         },
       },

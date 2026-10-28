@@ -49,7 +49,7 @@ export const PLACE_LABELS: Record<ProductionPlace, string> = {
 export const PLACE_COLORS: Record<ProductionPlace, string> = {
   STOCK: '#327dff', // blue
   DISPATCHED: '#16a34a', // green
-  APPROVED: '#0f766e', // deep teal
+  APPROVED: '#0891b2', // cyan (was deep teal #0f766e — too close to Dispatched green, and too grey: change 11's palette check)
   SAMPLE_CUTTING: '#d97706', // amber
   RECALIBRATION: '#9333ea', // violet
   IN_PROCESSING: '#64748b', // slate

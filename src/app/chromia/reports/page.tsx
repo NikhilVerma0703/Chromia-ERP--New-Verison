@@ -1,236 +1,121 @@
 import type { Metadata } from 'next';
 
-import { GroupedBars } from '@/components/chromia/charts/grouped-bars';
-import { TrendBars } from '@/components/chromia/charts/trend-bars';
-import { PieShare } from '@/components/chromia/charts/pie-share';
-import { EmptyState, Field, PageHeader, Stat } from '@/components/chromia/ui';
-import { dataTable, field as fieldClass, SectionCard } from '@/components/chromia/ui/form';
-import { parseRange } from '@/lib/chromia/reports';
-import { loadProductionSummary } from '@/lib/chromia/server/repositories/report-repository';
-import { formatPlantDay, isPlantDayKey, PLANT_TIME_ZONE, toPlantDateInput } from '@/lib/chromia/plant-time';
+import { HorizontalBars, PlaceDonut, PlaceLegend, StackedPlaceBars } from '@/components/chromia/charts/report-charts';
+import { TrendLine } from '@/components/chromia/charts/trend-line';
+import { EmptyState, PageHeader } from '@/components/chromia/ui';
+import { PLACE_COLORS } from '@/lib/chromia/constants/production-places';
+import { formatPlantDay, toPlantDateInput } from '@/lib/chromia/plant-time';
+import { parseTrendRange, TREND_RANGE_LABELS } from '@/lib/chromia/reports-charts';
+import { loadReportCharts } from '@/lib/chromia/server/repositories/report-repository';
 import { requirePageUser } from '@/lib/pageUser';
 
-export const metadata: Metadata = { title: 'Production Summary' };
+import { TrendFilter } from './trend-filter';
+
+export const metadata: Metadata = { title: 'Reports' };
 export const dynamic = 'force-dynamic';
 
-const { th, td, tdNum } = dataTable;
+/** The brand teal: one series, one colour — a design has no colour of its own. */
+const SERIES = '#0f4c5c'; // --color-brand-600
 
-const dateFmt = new Intl.DateTimeFormat('en-GB', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric', timeZone: PLANT_TIME_ZONE, });
-
-/**
- * The plant day an end of the range names, for the date inputs. The range is
- * built from plant days (CHR-8, the code review of 20 Oct 2026), so its first
- * instant is 00:00 plant time — the day before, in UTC, which is what
- * `toISOString` used to print here.
- */
-function iso(date: Date): string {
-  return toPlantDateInput(date);
-}
-
-/** A diary row's plant day, "03 May 2026". */
-function longDay(day: string): string {
-  return isPlantDayKey(day) ? formatPlantDay(day) : day;
+/** A chart panel: title and a line saying what it counts, as in the reference. */
+function Panel({ title, note, actions, children }: { title: string; note: string; actions?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="border-line surface rounded-xl border p-5 shadow-[0_1px_3px_rgba(16,24,40,0.06)] sm:p-6" aria-label={title}>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-[17px] font-bold tracking-tight">{title}</h2>
+          <p className="text-muted mt-0.5 text-xs">{note}</p>
+        </div>
+        {actions}
+      </div>
+      {children}
+    </section>
+  );
 }
 
 /**
- * Production summary.
+ * Reports (was Production Summary; rebuilt 28 Oct 2026, change 11) — charts
+ * only, every one from the live records (report-repository.ts):
  *
- * One page, one question: how did the plant do over this period? Headline
- * figures, a daily trend, the outcome mix, the recalibration funnel, and two
- * tables — the day-by-day diary and the per-material breakdown. Nothing here
- * repeats what Slabs, Downloads or Recalibration Tracking already answer at
- * row level; this page never names a slab.
+ *   1  Most Produced Designs                slabs per File Name / Planned Design
+ *   2  Stock Distribution · Recalibration   the four placed outcomes · slabs by attempt
+ *   3  Design-Wise Stock & Outcome          each design split by its six places
+ *   4  Daily Production Trend               slabs produced per day, over a chosen range
+ *
+ * Every count is of physical slabs, as the dashboard counts them, so the
+ * charts' totals are its KPIs. loading.tsx and error.tsx are the page's
+ * loading and error states; each chart has its own empty state.
  */
-export default async function ReportsPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  // Signed in, or no further, on every visit: the module layout's gate is
-  // not run again when the browser moves between this module's pages
-  // (requirePageUser in lib/pageUser.ts says why).
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requirePageUser();
-  const params = await searchParams;
-  const first = (value: string | string[] | undefined) =>
-    Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
-
-  const range = parseRange(first(params.from), first(params.to));
-  const summary = await loadProductionSummary(range);
-  const { headline } = summary;
-
-  const empty = headline.received === 0;
+  const range = parseTrendRange(await searchParams);
+  const charts = await loadReportCharts(range);
+  const today = toPlantDateInput(new Date());
+  const placed = charts.distribution.reduce((n, s) => n + s.count, 0);
+  const everSent = charts.attempts[0]?.slabs ?? 0;
+  const producedInRange = charts.trend.reduce((n, p) => n + p.slabs, 0);
+  const rangeText =
+    range.fromDay === range.toDay ? formatPlantDay(range.fromDay) : `${formatPlantDay(range.fromDay)} – ${formatPlantDay(range.toDay)}`;
 
   return (
     <>
-      <PageHeader
-        eyebrow="Overview"
-        title="Production summary"
-        description={`${dateFmt.format(range.from)} – ${dateFmt.format(range.to)}`}
-      />
+      <PageHeader title="Reports" description={`${charts.total} slabs produced in all · every chart counts each physical slab once`} />
 
-      {/* --------------------------------------------------------- period --- */}
-      <SectionCard title="Period" accent="active" padded={false}>
-        <form method="get" className="flex flex-wrap items-end gap-4 px-7 py-5">
-          <Field label="Date From" htmlFor="from" className="w-44">
-            <input
-              id="from"
-              name="from"
-              type="date"
-              defaultValue={iso(range.from)}
-              className={fieldClass}
-            />
-          </Field>
-          <Field label="Date To" htmlFor="to" className="w-44">
-            <input
-              id="to"
-              name="to"
-              type="date"
-              defaultValue={iso(range.to)}
-              className={fieldClass}
-            />
-          </Field>
-          <button
-            type="submit"
-            className="bg-brand-600 hover:bg-brand-700 inline-flex h-11 items-center justify-center rounded-lg px-6 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(16,24,40,0.12)] transition-colors"
-          >
-            Apply
-          </button>
-        </form>
-      </SectionCard>
+      <div className="flex flex-col gap-6">
+        {/* ------------------------------------------ 1 · most produced designs --- */}
+        <Panel title="Most Produced Designs" note="Slabs produced per File Name / Planned Design, most first">
+          {charts.designs.length === 0 ? (
+            <EmptyState>No slabs produced yet.</EmptyState>
+          ) : (
+            <HorizontalBars rows={charts.designs.map((d) => ({ label: d.design, value: d.total }))} color={SERIES} total={charts.total} />
+          )}
+        </Panel>
 
-      {empty ? (
-        <div className="mt-6">
-          <EmptyState>No slabs were received in this period.</EmptyState>
+        {/* ------------------------- 2 · stock distribution & recalibration --- */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Panel title="Stock Distribution" note="Where the placed slabs are now: Current Stock, Dispatched, Approved, Sample Cutting">
+            {placed === 0 ? <EmptyState>No slab has been placed yet.</EmptyState> : <PlaceDonut slices={charts.distribution} />}
+          </Panel>
+          <Panel title="Recalibration Attempts" note="Unique slabs sent for each attempt — a slab sent twice is in the 1st and the 2nd">
+            {everSent === 0 ? (
+              <EmptyState>No slab has been sent for recalibration yet.</EmptyState>
+            ) : (
+              <HorizontalBars
+                rows={charts.attempts.map((a) => ({ label: `${['1st', '2nd', '3rd', '4th', '5th'][a.attempt - 1]} Attempt`, value: a.slabs }))}
+                color={PLACE_COLORS.RECALIBRATION}
+                total={everSent}
+                compact
+              />
+            )}
+          </Panel>
         </div>
-      ) : (
-        <>
-          {/* ----------------------------------------------------- headline --- */}
-          <section className="mt-8 mb-8">
-            <h2 className="text-muted mb-3 text-[11px] font-semibold tracking-[0.14em] uppercase">
-              Headline
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Stat label="Slabs produced" value={headline.received} tone="active" />
-              <Stat label="Still in process" value={headline.inProcess} tone="processing" />
-              <Stat label="Dispatched" value={headline.dispatched} tone="done" />
-              <Stat label="Stock" value={headline.stocked} tone="stock" />
-              <Stat label="Sample cutting" value={headline.sampleCut} tone="hold" />
-              <Stat label="Recalibration" value={headline.recalibrated} tone="recalibration" />
+
+        {/* ------------------------- 3 · design-wise stock & outcome analysis --- */}
+        <Panel title="Design-Wise Stock & Outcome Analysis" note="Each design's slabs by where they are now, most produced first">
+          {charts.designs.length === 0 ? (
+            <EmptyState>No slabs produced yet.</EmptyState>
+          ) : (
+            <div className="flex flex-col gap-5">
+              <PlaceLegend />
+              <StackedPlaceBars rows={charts.designs.map((d) => ({ label: d.design, total: d.total, places: d.places }))} />
             </div>
-          </section>
+          )}
+        </Panel>
 
-          {/* --------------------------------------------- outcome mix --- */}
-          <div className="mb-6">
-            <SectionCard title="Where the slabs went" accent="active">
-              <PieShare segments={summary.outcomes} />
-            </SectionCard>
-          </div>
-
-          {/* ------------------------------------------ chart 1: trend --- */}
-          <div className="mt-8 mb-6">
-            <SectionCard title="Production Trend" accent="active">
-              <TrendBars days={summary.daily} />
-            </SectionCard>
-          </div>
-
-          {/* ---------------------------------------------- table 1: daily --- */}
-          <div className="mb-6">
-            <SectionCard title="Day by day" padded={false}>
-              <div className="overflow-x-auto">
-                <table className={dataTable.root}>
-                  <thead className={dataTable.head}>
-                    <tr>
-                      <th className={th}>Date</th>
-                      <th className={`${th} text-right`}>Received</th>
-                      <th className={`${th} text-right`}>Processing done</th>
-                      <th className={`${th} text-right`}>Dispatched</th>
-                      <th className={`${th} text-right`}>Stock</th>
-                      <th className={`${th} text-right`}>Sample cutting</th>
-                      <th className={`${th} text-right`}>Recalibration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {summary.daily.map((row) => (
-                      <tr key={row.day} className={dataTable.row}>
-                        <td className={`${td} font-medium whitespace-nowrap`}>
-                          {longDay(row.day)}
-                        </td>
-                        <td className={`${tdNum} text-right`}>{row.received}</td>
-                        <td className={`${tdNum} text-right`}>{row.processingDone}</td>
-                        <td className={`${tdNum} text-right`}>{row.dispatched}</td>
-                        <td className={`${tdNum} text-right`}>{row.stocked}</td>
-                        <td className={`${tdNum} text-right`}>{row.sampleCut}</td>
-                        <td className={`${tdNum} text-right`}>{row.recalibration}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-line-strong surface-muted border-t font-semibold">
-                    <tr>
-                      <td className={td}>Total</td>
-                      <td className={`${tdNum} text-right`}>{summary.dailyTotal.received}</td>
-                      <td className={`${tdNum} text-right`}>{summary.dailyTotal.processingDone}</td>
-                      <td className={`${tdNum} text-right`}>{summary.dailyTotal.dispatched}</td>
-                      <td className={`${tdNum} text-right`}>{summary.dailyTotal.stocked}</td>
-                      <td className={`${tdNum} text-right`}>{summary.dailyTotal.sampleCut}</td>
-                      <td className={`${tdNum} text-right`}>{summary.dailyTotal.recalibration}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </SectionCard>
-          </div>
-
-          {/* -------------------------------- chart 2: base material --- */}
-          <div className="mb-6">
-            <SectionCard title="Base Material Performance" accent="grade">
-              <GroupedBars materials={summary.materials} />
-            </SectionCard>
-          </div>
-
-          {/* ------------------------------------------- table 2: material --- */}
-          <SectionCard title="By base material" accent="grade" padded={false}>
-            <div className="overflow-x-auto">
-              <table className={dataTable.root}>
-                <thead className={dataTable.head}>
-                  <tr>
-                    <th className={th}>Base Material</th>
-                    <th className={`${th} text-right`}>Received</th>
-                    <th className={`${th} text-right`}>Dispatched</th>
-                    <th className={`${th} text-right`}>Stocked</th>
-                    <th className={`${th} text-right`}>Sample cut</th>
-                    <th className={`${th} text-right`}>Recalibrated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.materials.map((row) => (
-                    <tr key={row.name} className={dataTable.row}>
-                      <td className={`${td} font-medium`}>{row.name}</td>
-                      <td className={`${tdNum} text-right`}>{row.received}</td>
-                      <td className={`${tdNum} text-right`}>{row.dispatched}</td>
-                      <td className={`${tdNum} text-right`}>{row.stocked}</td>
-                      <td className={`${tdNum} text-right`}>{row.sampleCut}</td>
-                      <td className={`${tdNum} text-right`}>{row.recalibrated}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot className="border-line-strong surface-muted border-t font-semibold">
-                  <tr>
-                    <td className={td}>{summary.materialTotal.name}</td>
-                    <td className={`${tdNum} text-right`}>{summary.materialTotal.received}</td>
-                    <td className={`${tdNum} text-right`}>{summary.materialTotal.dispatched}</td>
-                    <td className={`${tdNum} text-right`}>{summary.materialTotal.stocked}</td>
-                    <td className={`${tdNum} text-right`}>{summary.materialTotal.sampleCut}</td>
-                    <td className={`${tdNum} text-right`}>{summary.materialTotal.recalibrated}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </SectionCard>
-        </>
-      )}
+        {/* ----------------------------------------- 4 · daily production trend --- */}
+        <Panel
+          title="Daily Production Trend"
+          note={`${TREND_RANGE_LABELS[range.kind]} · ${rangeText} · ${producedInRange} ${producedInRange === 1 ? 'slab' : 'slabs'} produced`}
+          actions={<TrendFilter kind={range.kind} month={range.month} from={range.fromDay} to={range.toDay} today={today} />}
+        >
+          {range.problem ? <p className="text-status-waste mb-3 text-sm font-medium">{range.problem} Showing the Last 30 Days.</p> : null}
+          {producedInRange === 0 ? (
+            <EmptyState>No slabs were produced in this range.</EmptyState>
+          ) : (
+            <TrendLine points={charts.trend} color={SERIES} />
+          )}
+        </Panel>
+      </div>
     </>
   );
 }

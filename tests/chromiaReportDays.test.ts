@@ -191,9 +191,9 @@ test("CHR-8: the Summary's period is plant days, defaulting to the 30 ending tod
   assert.deepEqual(rangeDays(parseRange("2026-10-31", "2026-10-01", STOCKED_AT_0130)), { from: "2026-10-01", to: "2026-10-31" });
   assert.deepEqual(rangeDays(parseRange("rubbish", "", STOCKED_AT_0130)), { from: "2026-10-02", to: "2026-10-31" });
   assert.equal(dayKey(STOCKED_AT_0130), "2026-10-31");
-  // The page's date inputs read the range back as plant days, not UTC.
+  // Reports (change 11) reads its trend range as plant days, never as UTC.
   const page = read("src/app/chromia/reports/page.tsx");
-  assert.match(page, /function iso\(date: Date\): string \{\n\s+return toPlantDateInput\(date\);\n\}/);
+  assert.match(page, /const range = parseTrendRange\(await searchParams\);/);
   assert.doesNotMatch(page, /toISOString\(\)/);
 });
 

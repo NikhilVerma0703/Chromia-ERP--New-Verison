@@ -27,11 +27,10 @@ describe('one physical slab, one count — every page (change 10)', () => {
     expect(list).not.toMatch(/chromiaStockEntry\.findMany/);
   });
 
-  it('the Summary counts nothing of a deleted slab', () => {
+  it('Reports reads one table, the live physical slabs — nothing of a deleted slab (change 11)', () => {
     const repo = read('src/lib/chromia/server/repositories/report-repository.ts');
-    for (const table of ['chromiaProcessCycle', 'chromiaDispatch', 'chromiaStockEntry', 'chromiaSampleCutting']) {
-      expect(repo, table).toMatch(new RegExp(`prisma\\.${table}\\.findMany\\(\\{ where: \\{ [a-zA-Z]+: within, \\.\\.\\.live \\}`));
-    }
+    expect(repo).toMatch(/prisma\.chromiaSlab\.findMany\(\{\n\s+where: await physicalSlabWhere\(\),/);
+    expect(repo).not.toMatch(/prisma\.chromia(Dispatch|StockEntry|SampleCutting|RecalibrationCycle|ProcessCycle)\./);
   });
 });
 

@@ -92,7 +92,7 @@ export const CHROMIA_ITEMS: NavItem[] = [
   { href: "/chromia/approved",               icon: I.approved, label: "Approved Slabs" },
   { href: "/chromia/recalibrations",         icon: I.spanner,  label: "Recalibration" },
   { href: "/chromia/recalibration-tracking", icon: I.live,     label: "Recal. Tracking" },
-  { href: "/chromia/reports",                icon: I.ceo,      label: "Summary" },
+  { href: "/chromia/reports",                icon: I.ceo,      label: "Reports" },
   { href: "/chromia/downloads",              icon: I.box,      label: "Downloads" },
   { href: "/chromia/import",                 icon: I.entry,    label: "Import" },
   { href: "/chromia/attendance",             icon: I.attendance, label: "Attendance" },

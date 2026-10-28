@@ -33,7 +33,7 @@ export const navigation: readonly NavItem[] = [
   { title: 'Approved Slabs', href: '/chromia/approved', icon: 'approved' },
   { title: 'Recalibration', href: '/chromia/recalibrations', icon: 'recalibration' },
   { title: 'Recal. Tracking', href: '/chromia/recalibration-tracking', icon: 'tracking' },
-  { title: 'Summary', href: '/chromia/reports', icon: 'reports' },
+  { title: 'Reports', href: '/chromia/reports', icon: 'reports' },
   { title: 'Downloads', href: '/chromia/downloads', icon: 'downloads' },
   { title: 'Import', href: '/chromia/import', icon: 'import' },
   // Last, so swiping on past Import reaches it and nothing before it moves.

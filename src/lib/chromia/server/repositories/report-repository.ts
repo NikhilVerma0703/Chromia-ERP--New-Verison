@@ -1,92 +1,53 @@
 import { prisma } from '@/lib/chromia/db';
 import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
-import type { DateRange } from '@/lib/chromia/reports';
-import { isWithinRangeDays, padRange } from '@/lib/chromia/exports';
 import {
-  buildDailyActivity,
-  buildHeadline,
-  buildMaterialSummary,
-  buildOutcomeMix,
-  buildRecalibrationFunnel,
-  totalDailyRow,
-  totalMaterialRow,
-  type SummarySlab,
-} from '@/lib/chromia/production-summary';
+  dailyProduction,
+  designBreakdown,
+  recalibrationAttempts,
+  stockDistribution,
+  type ReportSlab,
+  type TrendRange,
+} from '@/lib/chromia/reports-charts';
 
 /**
- * Production summary — one cohort, four views.
+ * The Reports page (rebuilt 28 Oct 2026, change 11) — every chart from ONE
+ * read of the live slabs, each physical slab once (physical-slabs.ts), so the
+ * four sections count the very slabs the dashboard does: the designs add up to
+ * Total Produced, the donut is Current Stock / Dispatched / Approved / Sample
+ * Cutting, the stacked bars add up to the palette. reports-charts.ts says how
+ * each is counted.
  *
- * The cohort is every slab **received inside the window**. Headline figures,
- * outcome mix, funnel and the material table all measure that same set, so a
- * percentage on one card can be compared with a percentage on another. The
- * daily trend is separate by design: it is a diary of activity, not a cohort.
+ * It replaces the old Production Summary's cohort query: the page is charts
+ * only now, and its period form, headline tiles and tables are gone.
  */
-export async function loadProductionSummary(range: DateRange) {
-  // Padded for the query, filtered exactly by calendar day afterwards — a
-  // received date is a calendar day stored as an instant, so comparing
-  // instants alone drops rows that sit exactly on a boundary.
-  const within = padRange(range);
-  const onDay = (date: Date | null) => isWithinRangeDays(date, range);
-
-  // Each physical slab once (physical-slabs.ts), and nothing of a deleted
-  // slab — its dispatches, stock entries, cuts and trips included (change 10).
-  const physical = await physicalSlabWhere();
-  const live = { slab: { deletedAt: null } };
-  const [cohort, completed, dispatched, stocked, sampleCut, sentForRecalibration] =
-    await Promise.all([
-      prisma.chromiaSlab.findMany({
-        where: { AND: [physical, { receivedDate: within }] },
-        select: {
-          status: true,
-          currentDisposition: true,
-          recalibrationCount: true,
-          receivedDate: true,
-          baseMaterial: { select: { name: true } },
-          recalibrations: { select: { receivedDate: true } },
-        },
-      }),
-
-      prisma.chromiaProcessCycle.findMany({ where: { outTime: within, ...live }, select: { outTime: true } }),
-      prisma.chromiaDispatch.findMany({ where: { dispatchDate: within, ...live }, select: { dispatchDate: true } }),
-      prisma.chromiaStockEntry.findMany({ where: { stockDate: within, ...live }, select: { stockDate: true } }),
-      prisma.chromiaSampleCutting.findMany({ where: { cutDate: within, ...live }, select: { cutDate: true } }),
-      prisma.chromiaRecalibrationCycle.findMany({
-        where: { sentDate: within, ...live },
-        select: { sentDate: true },
-      }),
-    ]);
-
-  const inCohort = cohort.filter((slab) => onDay(slab.receivedDate));
-
-  const slabs: SummarySlab[] = inCohort.map((slab) => ({
-    status: slab.status,
-    disposition: slab.currentDisposition,
-    recalibrationCount: slab.recalibrationCount,
-    returnedFromRecalibration: slab.recalibrations.some((trip) => trip.receivedDate !== null),
-    materialName: slab.baseMaterial.name,
-  }));
-
-  const onlyDays = (dates: (Date | null)[]) => dates.filter((date): date is Date => onDay(date));
-
-  const daily = buildDailyActivity({
-    received: inCohort.map((slab) => slab.receivedDate),
-    processingDone: onlyDays(completed.map((row) => row.outTime)),
-    dispatched: onlyDays(dispatched.map((row) => row.dispatchDate)),
-    stocked: onlyDays(stocked.map((row) => row.stockDate)),
-    sampleCut: onlyDays(sampleCut.map((row) => row.cutDate)),
-    recalibration: onlyDays(sentForRecalibration.map((row) => row.sentDate)),
+export async function loadReportCharts(range: TrendRange) {
+  const rows = await prisma.chromiaSlab.findMany({
+    where: await physicalSlabWhere(),
+    select: {
+      receivedDate: true,
+      status: true,
+      currentDisposition: true,
+      plannedDesign: { select: { name: true, fileName: true } },
+      // A trip counts as an attempt once the slab has left (attemptsUsed).
+      _count: { select: { recalibrations: { where: { sentDate: { not: null } } } } },
+    },
   });
 
-  const materials = buildMaterialSummary(slabs);
+  const slabs: ReportSlab[] = rows.map((row) => ({
+    receivedDate: row.receivedDate,
+    status: row.status,
+    currentDisposition: row.currentDisposition,
+    design: row.plannedDesign?.fileName ?? row.plannedDesign?.name ?? null,
+    attemptsSent: row._count.recalibrations,
+  }));
 
   return {
-    range,
-    headline: buildHeadline(slabs),
-    outcomes: buildOutcomeMix(slabs),
-    funnel: buildRecalibrationFunnel(slabs),
-    daily,
-    dailyTotal: totalDailyRow(daily),
-    materials,
-    materialTotal: totalMaterialRow(materials),
+    total: slabs.length,
+    designs: designBreakdown(slabs),
+    distribution: stockDistribution(slabs),
+    attempts: recalibrationAttempts(slabs),
+    trend: dailyProduction(slabs, range),
   };
 }
+
+export type ReportCharts = Awaited<ReturnType<typeof loadReportCharts>>;
