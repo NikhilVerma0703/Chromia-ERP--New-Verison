@@ -31,22 +31,20 @@ import {
   toPlantReportDay,
 } from './plant-time.ts';
 
-export const EXPORT_KINDS = ['DISPATCH', 'STOCK', 'SAMPLE_CUTTING', 'RECALIBRATION'] as const;
+/**
+ * The By Slab Status reports (28 Oct 2026, change 12): their columns, rows,
+ * dates and S.No. are lib/chromia/download-reports.ts. In Stock is the
+ * slabs on the racks now; the other four, the slabs in that status.
+ */
+export const EXPORT_KINDS = ['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION'] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
 
 export const EXPORT_KIND_LABELS: Record<ExportKind, string> = {
-  DISPATCH: 'Dispatch',
-  STOCK: 'Stock',
+  STOCK: 'In Stock (Current Stock)',
+  DISPATCH: 'Dispatched',
+  APPROVED: 'Approved',
   SAMPLE_CUTTING: 'Sample Cutting',
   RECALIBRATION: 'Recalibration',
-};
-
-/** The date column each sheet filters and sorts on. */
-export const EXPORT_KIND_DATE_LABEL: Record<ExportKind, string> = {
-  DISPATCH: 'Dispatch Date',
-  STOCK: 'Stock Date',
-  SAMPLE_CUTTING: 'Cut Date',
-  RECALIBRATION: 'Recalibration Date',
 };
 
 export const RANGE_PRESETS = ['TODAY', 'LAST_WEEK', 'LAST_MONTH', 'MONTH', 'CUSTOM'] as const;
@@ -244,84 +242,6 @@ export interface ExportColumn {
 }
 
 /**
- * The fixed columns of every sheet, in order. The outcome's own fields are
- * appended after these by the caller, all in the `outcome` band.
- */
-/**
- * The fields every outcome sheet carries, named.
- *
- * Named rather than positional because the order is not the same on every
- * sheet, and a sheet whose headings and values disagree is worse than one with
- * the columns in an awkward order. Both the workbook and the preview on screen
- * read their order from `baseFields`, so neither can drift from the other.
- */
-export const BASE_FIELDS = [
-  'date',
-  'batchNo',
-  'slabNo',
-  'baseMaterial',
-  'design',
-  'thicknessCm',
-  'receivedDate',
-  'inTime',
-  'status',
-  'disposition',
-] as const;
-
-export type BaseField = (typeof BASE_FIELDS)[number];
-
-const BASE_COLUMN: Record<BaseField, Omit<ExportColumn, 'label'> & { label: string }> = {
-  date: { label: 'Date', group: 'identity', width: 16 },
-  batchNo: { label: 'Batch No.', group: 'identity', width: 14 },
-  slabNo: { label: 'Slab No.', group: 'identity', width: 14 },
-  baseMaterial: { label: 'Base Material / Slab Name', group: 'product', width: 24 },
-  design: { label: 'File Name / Planned Design', group: 'product', width: 26 },
-  thicknessCm: { label: 'Thickness (cm)', group: 'product', width: 14 },
-  receivedDate: { label: 'Production Date', group: 'timing', width: 16 },
-  // In-time is the time of day only now — the day is the Production Date beside
-  // it. Out-time has been dropped from every sheet.
-  inTime: { label: 'In-time', group: 'timing', width: 12 },
-  status: { label: 'Status', group: 'state', width: 22 },
-  disposition: { label: 'Outcome', group: 'state', width: 18 },
-};
-
-/**
- * The order every outcome sheet writes its base fields in.
- *
- * The production date leads, on all four. Somebody reading one of these sheets
- * looks a slab up by the day it went on the line — that is the number written
- * on the slab and in the register — and the day it moved is the answer they
- * came for, not the way in. The sheet's own date follows it, and everything
- * after those two keeps the order it has always had.
- */
-export function baseFields(_kind: ExportKind): BaseField[] {
-  return [
-    'receivedDate',
-    'date',
-    ...BASE_FIELDS.filter((field) => field !== 'receivedDate' && field !== 'date'),
-  ];
-}
-
-/** The heading a field carries on this sheet. */
-export function baseFieldLabel(field: BaseField, kind: ExportKind): string {
-  // Only the outcome's own date is named after the sheet it is on.
-  return field === 'date' ? EXPORT_KIND_DATE_LABEL[kind] : BASE_COLUMN[field].label;
-}
-
-export function baseColumns(kind: ExportKind): ExportColumn[] {
-  return baseFields(kind).map((field, index) => ({
-    ...BASE_COLUMN[field],
-    label: baseFieldLabel(field, kind),
-    // Whatever a sheet opens with is that sheet's anchor, and anchors are read
-    // as identity rather than as timing — which is why the production date
-    // already leads the complete-production sheet in blue and not in amber.
-    group: index === 0 ? 'identity' : BASE_COLUMN[field].group,
-  }));
-}
-
-// ------------------------------------------------- complete production ---
-
-/**
  * The period part of an export query, without the sheet kind.
  *
  * The complete-production sheet has no kind — it is everything — so it reuses
@@ -379,39 +299,6 @@ export function productionFileName(range: DateRange): string {
   const days = rangeDays(range);
   return `chromia-production_${days.from}_to_${days.to}.xlsx`;
 }
-
-/**
- * Columns of the complete production sheet.
- *
- * S.No. leads — the row number the sheet is read by — then the production date.
- * Everything the outcome sheets carry follows, plus Grade and the slab's own
- * remark right after the Outcome (both read from the Slab Records data), then
- * the three outcome dates side by side, so one row shows a slab's whole life
- * without needing three files. In-time is the time of day only; Out-time is
- * gone.
- */
-export function productionColumns(): ExportColumn[] {
-  return [
-    { label: 'S.No.', group: 'identity', width: 7 },
-    { label: 'Production Date', group: 'identity', width: 16 },
-    { label: 'Batch No.', group: 'identity', width: 14 },
-    { label: 'Slab No.', group: 'identity', width: 14 },
-    { label: 'Base Material / Slab Name', group: 'product', width: 24 },
-    { label: 'File Name / Planned Design', group: 'product', width: 26 },
-    { label: 'Thickness (cm)', group: 'product', width: 14 },
-    { label: 'In-time', group: 'timing', width: 12 },
-    { label: 'Status', group: 'state', width: 22 },
-    { label: 'Outcome', group: 'state', width: 18 },
-    { label: 'Grade', group: 'state', width: 10 },
-    { label: 'Slab Remarks', group: 'state', width: 30 },
-    { label: 'Recalibrations', group: 'state', width: 15 },
-    { label: 'Dispatch Date', group: 'outcome', width: 16 },
-    { label: 'Stock Date', group: 'outcome', width: 16 },
-    { label: 'Cut Date', group: 'outcome', width: 16 },
-  ];
-}
-
-// ------------------------------------------------------ calendar filtering ---
 
 /**
  * Widen a range by a day at each end, for the database query only.

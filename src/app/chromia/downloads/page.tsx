@@ -2,31 +2,23 @@ import type { Metadata } from 'next';
 
 import { EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
-import { DispositionBadge, GradeBadge, StatusBadge } from '@/components/chromia/ui/status';
+import { API_ROUTES } from '@/lib/chromia/constants/app';
+import { REPORT_DATE_LABELS, REPORT_LABELS, type BuiltReport } from '@/lib/chromia/download-reports';
 import {
-  baseColumns,
-  baseFields,
   buildExportQuery,
   buildRangeQuery,
-  EXPORT_KIND_LABELS,
   GROUP_CLASSES,
   parseExportQuery,
   parseRangeQuery,
   recentMonths,
   resolveRange,
-  type BaseField,
 } from '@/lib/chromia/exports';
-import {
-  loadExportRows,
-  loadProductionRows,
-  type ExportRow,
-} from '@/lib/chromia/server/repositories/export-repository';
+import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
+import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
+import { requirePageUser } from '@/lib/pageUser';
 
 import { DownloadForm } from './download-form';
 import { ProductionForm } from './production-form';
-import { API_ROUTES } from '@/lib/chromia/constants/app';
-import { formatPlantReportDay, formatPlantTime, PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
-import { requirePageUser } from '@/lib/pageUser';
 
 export const metadata: Metadata = { title: 'Downloads' };
 export const dynamic = 'force-dynamic';
@@ -36,76 +28,64 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
   month: 'short',
   year: 'numeric', timeZone: PLANT_TIME_ZONE, });
 
-const { td, tdMuted } = dataTable;
-
-/** Millimetres in the database, centimetres on the register and on screen. */
-function cmOf(mm: string | null): string {
-  if (mm === null) return '—';
-  const parsed = Number(mm);
-  return Number.isFinite(parsed) ? String(parsed / 10) : '—';
-}
+const { td } = dataTable;
 
 /** Header cell carrying its band colour — mirrors the Excel sheet exactly. */
 const th = (group: keyof typeof GROUP_CLASSES) =>
   `${GROUP_CLASSES[group]} px-5 py-3 text-[11px] font-semibold tracking-[0.12em] whitespace-nowrap uppercase`;
 
 /**
- * How each base field is drawn in the preview.
- *
- * Keyed by field rather than written out in order, because the order is not the
- * same on every sheet — Dispatch opens with the production date — and it is read
- * from `baseFields`, the same list the workbook uses. Neither can drift.
+ * A report's preview: its columns and its rows exactly as the workbook writes
+ * them (loadDownloadReport → buildReport), S.No. first — so what is shown is
+ * what is downloaded, cell for cell.
  */
-const PREVIEW_CELL: Record<
-  BaseField,
-  { className: string; render: (row: ExportRow) => React.ReactNode }
-> = {
-  // Both dates print the day the workbook prints and the filter files the row
-  // under — toPlantReportDay (CHR-8, the code review of 20 Oct 2026).
-  date: {
-    className: `${td} font-medium whitespace-nowrap`,
-    render: (row) => formatPlantReportDay(row.date),
-  },
-  batchNo: { className: `${tdMuted} font-mono`, render: (row) => row.batchNo },
-  slabNo: { className: td, render: (row) => <span className="font-mono">{row.slabNo}</span> },
-  baseMaterial: { className: td, render: (row) => row.baseMaterial },
-  design: { className: tdMuted, render: (row) => row.design ?? '—' },
-  thicknessCm: {
-    className: `${tdMuted} text-right tabular-nums`,
-    render: (row) => cmOf(row.thicknessMm),
-  },
-  receivedDate: {
-    className: `${tdMuted} whitespace-nowrap`,
-    render: (row) => formatPlantReportDay(row.receivedDate),
-  },
-  inTime: {
-    className: tdMuted,
-    // Time of day only — mirrors the workbook, where the day is the Production
-    // Date column and Out-time is gone.
-    render: (row) => (row.inTime ? formatPlantTime(row.inTime) : '—'),
-  },
-  status: {
-    className: td,
-    render: (row) => <StatusBadge status={row.status} disposition={row.disposition} />,
-  },
-  disposition: { className: td, render: (row) => <DispositionBadge disposition={row.disposition} /> },
-};
+function ReportPreview({ report }: { report: BuiltReport }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className={dataTable.root} data-report={report.kind}>
+        <thead>
+          <tr>
+            {report.columns.map((column) => (
+              <th key={column.label} className={`${th(column.group)} ${column.label === 'S.No.' || column.label === 'Thickness (cm)' ? 'text-right' : ''}`}>
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {report.rows.map((row) => (
+            <tr key={String(row[0])} className={dataTable.row}>
+              {row.map((cell, i) => (
+                <td
+                  key={report.columns[i]?.label ?? i}
+                  className={`${td} ${typeof cell === 'number' ? 'text-right tabular-nums' : ''} ${i === 1 ? 'font-medium whitespace-nowrap' : ''} max-w-[18rem]`}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /**
- * Downloads — export a movement sheet.
+ * Downloads (rebuilt 28 Oct 2026, change 12).
  *
- * Pick a sheet and a period; the table below is a live preview of exactly the
- * rows the workbook will contain, so nobody downloads a file to find out it is
- * empty or covers the wrong month.
+ *   01 Complete Production  Slab Records' columns, every slab produced in the period
+ *   02 By Slab Status       In Stock · Dispatched · Approved · Sample Cutting · Recalibration
+ *
+ * Each with its period (unchanged), a live preview of exactly the rows the
+ * workbook will hold — oldest first on the report's own date, S.No. 1…n — and
+ * its Download Excel. lib/chromia/download-reports.ts defines every report.
  */
 export default async function DownloadsPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  // Signed in, or no further, on every visit: the module layout's gate is
-  // not run again when the browser moves between this module's pages
-  // (requirePageUser in lib/pageUser.ts says why).
   await requirePageUser();
   const params = await searchParams;
 
@@ -117,19 +97,15 @@ export default async function DownloadsPage({
   const productionQuery = parseRangeQuery(params, 'p');
   const productionRange = resolveRange(productionQuery);
 
-  const [rows, productionRows] = await Promise.all([
-    loadExportRows(query.kind, range),
-    loadProductionRows(productionRange),
+  const [report, production] = await Promise.all([
+    loadDownloadReport(query.kind, range),
+    loadDownloadReport('PRODUCTION', productionRange),
   ]);
 
   const downloadHref = `${API_ROUTES.exports}?${buildExportQuery(query)}`;
   const productionHref = `${API_ROUTES.exports}/production?${buildRangeQuery(productionQuery)}`;
-  const extraColumns = Object.keys(rows[0]?.extra ?? {});
-  // Heading, band colour and order all come from the workbook's own column
-  // definitions, so the preview cannot describe a file it is not.
-  const fields = baseFields(query.kind);
-  const columns = baseColumns(query.kind);
   const months = recentMonths();
+  const period = (r: { from: Date; to: Date }) => `${dateFmt.format(r.from)} – ${dateFmt.format(r.to)}`;
 
   return (
     <>
@@ -138,83 +114,26 @@ export default async function DownloadsPage({
       <ProductionForm
         query={productionQuery}
         months={months}
-        rowCount={productionRows.length}
+        rowCount={production.rows.length}
         downloadHref={productionHref}
       />
 
       <SectionCard
         title="Production preview"
         accent="active"
-        padded={productionRows.length === 0}
+        padded={production.rows.length === 0}
         actions={
           <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
-            {dateFmt.format(productionRange.from)} – {dateFmt.format(productionRange.to)} ·{' '}
-            <span className="text-foreground font-semibold tabular-nums">
-              {productionRows.length}
-            </span>{' '}
-            {productionRows.length === 1 ? 'slab' : 'slabs'}
+            {period(productionRange)} ·{' '}
+            <span className="text-foreground font-semibold tabular-nums">{production.rows.length}</span>{' '}
+            {production.rows.length === 1 ? 'slab' : 'slabs'} · oldest production date first
           </span>
         }
       >
-        {productionRows.length === 0 ? (
-          <EmptyState>No slabs were received in this period.</EmptyState>
+        {production.rows.length === 0 ? (
+          <EmptyState>No slabs were produced in this period.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className={dataTable.root}>
-              <thead>
-                <tr>
-                  <th className={th('identity')}>S.No.</th>
-                  <th className={th('identity')}>Production Date</th>
-                  <th className={th('identity')}>Batch No.</th>
-                  <th className={th('identity')}>Slab No.</th>
-                  <th className={th('product')}>Base Material / Slab Name</th>
-                  <th className={th('product')}>File Name / Planned Design</th>
-                  <th className={`${th('product')} text-right`}>Thickness (cm)</th>
-                  <th className={th('timing')}>In-time</th>
-                  <th className={th('state')}>Status</th>
-                  <th className={th('state')}>Outcome</th>
-                  <th className={th('state')}>Grade</th>
-                  <th className={th('state')}>Slab Remarks</th>
-                  <th className={th('outcome')}>Recal.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productionRows.map((row, index) => (
-                  <tr key={row.slabId} className={dataTable.row}>
-                    <td className={`${tdMuted} text-right tabular-nums`}>{index + 1}</td>
-                    <td className={`${td} font-medium whitespace-nowrap`}>
-                      {formatPlantReportDay(row.receivedDate)}
-                    </td>
-                    <td className={`${tdMuted} font-mono`}>{row.batchNo}</td>
-                    <td className={td}>
-                      <span className="font-mono">{row.slabNo}</span>
-                    </td>
-                    <td className={td}>{row.baseMaterial}</td>
-                    <td className={tdMuted}>{row.design ?? '—'}</td>
-                    <td className={`${tdMuted} text-right tabular-nums`}>
-                      {row.thicknessCm ?? '—'}
-                    </td>
-                    <td className={tdMuted}>{row.inTime ? formatPlantTime(row.inTime) : '—'}</td>
-                    <td className={td}>
-                      <StatusBadge status={row.status} disposition={row.disposition} />
-                    </td>
-                    <td className={td}>
-                      <DispositionBadge disposition={row.disposition} />
-                    </td>
-                    <td className={td}>
-                      <GradeBadge grade={row.grade} />
-                    </td>
-                    <td className={`${tdMuted} max-w-[16rem] truncate`} title={row.remarks ?? ''}>
-                      {row.remarks ?? '—'}
-                    </td>
-                    <td className={`${tdMuted} text-right tabular-nums`}>
-                      {row.recalibrationCount > 0 ? `${row.recalibrationCount}/5` : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ReportPreview report={production} />
         )}
       </SectionCard>
 
@@ -223,69 +142,26 @@ export default async function DownloadsPage({
       <DownloadForm
         query={query}
         months={months}
-        rowCount={rows.length}
+        rowCount={report.rows.length}
         downloadHref={downloadHref}
       />
 
       <SectionCard
         step="03"
-        title="Outcome preview"
+        title={`${REPORT_LABELS[query.kind]} preview`}
         accent="grade"
-        padded={rows.length === 0}
+        padded={report.rows.length === 0}
         actions={
           <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
-            <span className="text-foreground font-semibold tabular-nums">{rows.length}</span>{' '}
-            {rows.length === 1 ? 'record' : 'records'}
+            {period(range)} · <span className="text-foreground font-semibold tabular-nums">{report.rows.length}</span>{' '}
+            {report.rows.length === 1 ? 'slab' : 'slabs'} · oldest {REPORT_DATE_LABELS[query.kind].toLowerCase()} first
           </span>
         }
       >
-        {rows.length === 0 ? (
-          <EmptyState>
-            No {EXPORT_KIND_LABELS[query.kind].toLowerCase()} records in this period.
-          </EmptyState>
+        {report.rows.length === 0 ? (
+          <EmptyState>No {REPORT_LABELS[query.kind].toLowerCase()} slabs in this period.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className={dataTable.root}>
-              <thead>
-                <tr>
-                  <th className={th('identity')}>S.No.</th>
-                  {columns.map((column) => (
-                    <th key={column.label} className={th(column.group)}>
-                      {column.label}
-                    </th>
-                  ))}
-                  {extraColumns.map((column) => (
-                    <th key={column} className={th('outcome')}>
-                      {column}
-                    </th>
-                  ))}
-                  <th className={th('state')}>Grade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, index) => (
-                  <tr key={`${row.slabId}-${index}`} className={dataTable.row}>
-                    <td className={`${tdMuted} text-right tabular-nums`}>{index + 1}</td>
-                    {fields.map((field) => (
-                      <td key={field} className={PREVIEW_CELL[field].className}>
-                        {PREVIEW_CELL[field].render(row)}
-                      </td>
-                    ))}
-                    {extraColumns.map((column) => (
-                      <td key={column} className={tdMuted}>
-                        {row.extra[column] === null || row.extra[column] === undefined
-                          ? '—'
-                          : String(row.extra[column])}
-                      </td>
-                    ))}
-                    <td className={td}>
-                      <GradeBadge grade={row.grade} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ReportPreview report={report} />
         )}
       </SectionCard>
     </>

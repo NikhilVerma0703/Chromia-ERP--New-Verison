@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  BASE_FIELDS,
-  EXPORT_KIND_DATE_LABEL,
   EXPORT_KIND_LABELS,
   EXPORT_KINDS,
-  baseColumns,
-  baseFieldLabel,
-  baseFields,
   buildExportQuery,
   buildRangeQuery,
   exportFileName,
@@ -17,7 +12,6 @@ import {
   padRange,
   parseExportQuery,
   parseRangeQuery,
-  productionColumns,
   productionFileName,
   recentMonths,
   resolveRange,
@@ -120,17 +114,9 @@ describe('guards and parsing', () => {
     expect(isRangePreset('YEARLY')).toBe(false);
   });
 
-  it('offers a sheet for every outcome the in-charge asks for', () => {
-    expect([...EXPORT_KINDS]).toEqual(['DISPATCH', 'STOCK', 'SAMPLE_CUTTING', 'RECALIBRATION']);
-  });
-
-  it('names the date each sheet is filtered on', () => {
-    // The caption under each choice is built from this, so a sheet without a
-    // date label would ship a card that says "Filtered on undefined".
-    for (const kind of EXPORT_KINDS) {
-      expect(EXPORT_KIND_LABELS[kind]).toBeTruthy();
-      expect(EXPORT_KIND_DATE_LABEL[kind]).toMatch(/Date$/);
-    }
+  it('offers the five By Slab Status reports, in the order asked for (change 12)', () => {
+    expect([...EXPORT_KINDS]).toEqual(['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION']);
+    expect(EXPORT_KINDS.map((kind) => EXPORT_KIND_LABELS[kind])).toEqual(['In Stock (Current Stock)', 'Dispatched', 'Approved', 'Sample Cutting', 'Recalibration']);
   });
 
   it('defaults to today’s dispatch sheet', () => {
@@ -239,23 +225,6 @@ describe('the prefixed period picker', () => {
     const range = resolveRange({ preset: 'MONTH', month: '2026-07', from: '', to: '' }, NOW);
     expect(productionFileName(range)).toBe('chromia-production_2026-07-01_to_2026-07-31.xlsx');
   });
-
-  it('gives the production sheet a full column set', () => {
-    const labels = productionColumns().map((column) => column.label);
-    expect(labels).toContain('Recalibrations');
-    expect(labels).toContain('Dispatch Date');
-    // S.No. leads it now, and Grade and Slab Remarks ride after the Outcome —
-    // both read from the Slab Records data.
-    expect(labels[0]).toBe('S.No.');
-    expect(labels).toContain('Grade');
-    expect(labels).toContain('Slab Remarks');
-    // Out-time is gone from every sheet; Fully Printed Date went with its field.
-    expect(labels).not.toContain('Out-time');
-    expect(labels).not.toContain('Fully Printed Date');
-    // Sixteen: fourteen as before, minus Out-time, plus S.No., Grade and Slab
-    // Remarks.
-    expect(labels).toHaveLength(16);
-  });
 });
 
 describe('plant-day filtering', () => {
@@ -296,123 +265,5 @@ describe('plant-day filtering', () => {
 
   it('treats a missing date as outside the range', () => {
     expect(isWithinRangeDays(null, may)).toBe(false);
-  });
-});
-
-describe('the order a sheet writes its columns in', () => {
-  it("opens every sheet with the production date, then that sheet's own date", () => {
-    for (const kind of EXPORT_KINDS) {
-      const labels = baseColumns(kind).map((column) => column.label);
-
-      expect(labels[0]).toBe('Production Date');
-      expect(labels[1]).toBe(EXPORT_KIND_DATE_LABEL[kind]);
-    }
-  });
-
-  it('never leaves the production date buried in the middle of a sheet', () => {
-    // Where it used to sit: sixth, just after the file name. Column one is the
-    // one somebody reads a sheet down.
-    for (const kind of EXPORT_KINDS) {
-      const labels = baseColumns(kind).map((column) => column.label);
-      expect(labels.indexOf('Production Date')).toBe(0);
-    }
-  });
-
-  it('leaves everything after those two exactly as it was', () => {
-    const tail = [
-      'Batch No.',
-      'Slab No.',
-      'Base Material / Slab Name',
-      'File Name / Planned Design',
-      'Thickness (cm)',
-      'In-time',
-      // Out-time was dropped from every sheet; Fully Printed Date went with its
-      // field before that.
-      'Status',
-      'Outcome',
-    ];
-
-    expect(baseColumns('DISPATCH').map((column) => column.label)).toEqual([
-      'Production Date',
-      'Dispatch Date',
-      ...tail,
-    ]);
-    expect(baseColumns('STOCK').map((column) => column.label)).toEqual([
-      'Production Date',
-      'Stock Date',
-      ...tail,
-    ]);
-    expect(baseColumns('SAMPLE_CUTTING').map((column) => column.label)).toEqual([
-      'Production Date',
-      'Cut Date',
-      ...tail,
-    ]);
-    expect(baseColumns('RECALIBRATION').map((column) => column.label)).toEqual([
-      'Production Date',
-      'Recalibration Date',
-      ...tail,
-    ]);
-  });
-
-  it('puts Recalibration in the same order, with its own extras still last', () => {
-    expect(baseColumns('RECALIBRATION').map((column) => column.label).slice(0, 3)).toEqual([
-      'Production Date',
-      'Recalibration Date',
-      'Batch No.',
-    ]);
-  });
-
-  it('carries every field on every sheet — a reorder is not a removal', () => {
-    for (const kind of EXPORT_KINDS) {
-      expect([...baseFields(kind)].sort()).toEqual([...BASE_FIELDS].sort());
-    }
-  });
-
-  it('names the headings and the values from one list', () => {
-    // The workbook maps values through `baseFields` and headings through
-    // `baseColumns`. If these two ever disagreed, a column would sit above the
-    // wrong values — the failure this shared order exists to prevent.
-    for (const kind of EXPORT_KINDS) {
-      const fields = baseFields(kind);
-      const labels = baseColumns(kind).map((column) => column.label);
-
-      expect(labels).toEqual(fields.map((field) => baseFieldLabel(field, kind)));
-    }
-  });
-});
-
-describe('the columns every sheet carries', () => {
-  it('puts the thickness straight after the design, where the register has it', () => {
-    for (const kind of EXPORT_KINDS) {
-      const labels = baseColumns(kind).map((column) => column.label);
-      const design = labels.indexOf('File Name / Planned Design');
-
-      expect(design).toBeGreaterThan(-1);
-      expect(labels[design + 1]).toBe('Thickness (cm)');
-    }
-  });
-
-  it('names the material and the design the way every screen names them', () => {
-    // The same two headings the operator reads on Slab Records and on the
-    // register. A sheet that calls them something shorter reads as a different
-    // system's export.
-    for (const kind of EXPORT_KINDS) {
-      const labels = baseColumns(kind).map((column) => column.label);
-      expect(labels).toContain('Base Material / Slab Name');
-      expect(labels).toContain('File Name / Planned Design');
-      expect(labels).not.toContain('Base Material');
-      expect(labels).not.toContain('File Name / Design');
-    }
-  });
-
-  it('carries all three on the complete-production sheet too', () => {
-    const labels = productionColumns().map((column) => column.label);
-
-    // Now at 4–6, after S.No., Production Date, Batch No. and Slab No.
-    expect(labels.slice(4, 7)).toEqual([
-      'Base Material / Slab Name',
-      'File Name / Planned Design',
-      'Thickness (cm)',
-    ]);
   });
 });

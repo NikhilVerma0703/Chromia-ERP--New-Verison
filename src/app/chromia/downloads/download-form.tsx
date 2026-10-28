@@ -4,8 +4,8 @@ import { useState } from 'react';
 
 import { Field } from '@/components/chromia/ui';
 import { field, FieldGrid, SectionCard, selectField } from '@/components/chromia/ui/form';
+import { REPORT_DATE_LABELS } from '@/lib/chromia/download-reports';
 import {
-  EXPORT_KIND_DATE_LABEL,
   EXPORT_KIND_LABELS,
   EXPORT_KINDS,
   RANGE_PRESET_LABELS,
@@ -25,8 +25,9 @@ interface Props {
 }
 
 const KIND_ACCENT: Record<ExportKind, string> = {
-  DISPATCH: 'peer-checked:border-status-done peer-checked:text-status-done',
   STOCK: 'peer-checked:border-status-stock peer-checked:text-status-stock',
+  DISPATCH: 'peer-checked:border-status-done peer-checked:text-status-done',
+  APPROVED: 'peer-checked:border-status-approved peer-checked:text-status-approved',
   SAMPLE_CUTTING: 'peer-checked:border-status-hold peer-checked:text-status-hold',
   RECALIBRATION:
     'peer-checked:border-status-recalibration peer-checked:text-status-recalibration',
@@ -45,14 +46,14 @@ export function DownloadForm({ query, months, rowCount, downloadHref }: Props) {
 
   return (
     <div className="mb-6">
-      <SectionCard step="02" title="By outcome" accent="grade" size="lg">
+      <SectionCard step="02" title="By Slab Status" accent="grade" size="lg">
         <form method="get" className="flex flex-col gap-6">
           {/* ------------------------------------------------- 1. kind --- */}
           <fieldset>
             <legend className="text-muted mb-3 text-[11px] font-semibold tracking-[0.16em] uppercase">
-              Sheet
+              Slab Status
             </legend>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {EXPORT_KINDS.map((value) => (
                 <label key={value} className="relative cursor-pointer">
                   <input
@@ -68,7 +69,7 @@ export function DownloadForm({ query, months, rowCount, downloadHref }: Props) {
                   >
                     {EXPORT_KIND_LABELS[value]}
                     <span className="text-muted mt-0.5 block text-xs font-normal">
-                      Filtered on {EXPORT_KIND_DATE_LABEL[value].toLowerCase()}
+                      By {REPORT_DATE_LABELS[value].toLowerCase()}, oldest first
                     </span>
                   </span>
                 </label>

@@ -18,6 +18,8 @@ import {
 import { searchSlabs } from '@/lib/chromia/server/repositories/slab-repository';
 import { loadReportCharts } from '@/lib/chromia/server/repositories/report-repository';
 import { parseTrendRange } from '@/lib/chromia/reports-charts';
+import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
+import { plantDayRange } from '@/lib/chromia/plant-time';
 import {
   listStockedSlabs,
   listStockOutcomeRecords,
@@ -88,6 +90,21 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   for (const place of PRODUCTION_PLACES) {
     same(`Reports design-wise ${place} = Dashboard palette`, overall.places[place], reports.designs.reduce((n, d) => n + d.places[place], 0));
   }
+
+  // ── Downloads (change 12): over all time, each report is its KPI ──────
+  const allTime = plantDayRange('2000-01-01', '2099-12-31');
+  const [dlProduction, dlStock, dlDispatch, dlApproved, dlCut, dlRecal] = await Promise.all(
+    (['PRODUCTION', 'STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION'] as const).map((kind) => loadDownloadReport(kind, allTime)),
+  );
+  same('Downloads Complete Production = Total Produced', overall.produced, dlProduction!.rows.length);
+  same('Downloads In Stock = Current Stock', overall.currentStock, dlStock!.rows.length);
+  same('Downloads Dispatched = Total Dispatched', overall.dispatched, dlDispatch!.rows.length);
+  same('Downloads Approved = Total Approved', overall.approved, dlApproved!.rows.length);
+  same('Downloads Sample Cutting = Total Sample Cutting', overall.sampleCutting, dlCut!.rows.length);
+  for (const report of [dlProduction!, dlStock!, dlDispatch!, dlApproved!, dlCut!, dlRecal!]) {
+    same(`Downloads ${report.kind}: S.No. runs 1…n`, report.rows.map((_, i) => i + 1).join(','), report.rows.map((r) => r[0]).join(','));
+  }
+  none('Downloads In Stock: every Current Status is In Stock', dlStock!.rows.filter((r) => r[10] !== 'In Stock').map((r) => String(r[3])));
 
   // ── Current Stock ─────────────────────────────────────────────────────
   same('Stockyard Current Stock = In Stock Records rows', yard.currentStock, inStock.length);

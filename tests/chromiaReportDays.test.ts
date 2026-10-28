@@ -249,11 +249,11 @@ test("the dashboard reads the day's Stockyard work by the date it was given", ()
   assert.doesNotMatch(repo, /getFullYear|setHours|startOfToday/);
 });
 
-test("CHR-3: the Recalibration sheet leaves out a slab written off after its last attempt", () => {
+test("change 12: the Recalibration report holds the Recalibration page's slabs, by its rule", () => {
   const repo = read("src/lib/chromia/server/repositories/export-repository.ts");
-  const recal = repo.slice(repo.indexOf("prisma.chromiaRecalibrationCycle.findMany("));
-  assert.match(recal, /currentDisposition: Disposition\.RECALIBRATION,\n\s+status: \{ not: ChromiaSlabStatus\.WASTE \},/);
-  assert.match(repo, /const day = \(date: Date \| null\) => \(date \? toPlantReportDay\(date\) : null\);/);
+  assert.match(repo, /RECALIBRATION: \{ OR: \[\{ currentDisposition: Disposition\.RECALIBRATION \}, \{ recalibrations: \{ some: \{\} \} \}\] \},/);
+  assert.match(repo, /const attemptNumber = boardRows\(\[state\], null\)\[0\]\?\.attemptNumber \?\? null;/);
+  assert.match(repo, /currentStatus: statusLabel\(state, slab\.currentGrade\),/);
 });
 
 test("CHR-8: no server-clock day survives in the Chromia report code", () => {
@@ -267,15 +267,14 @@ test("CHR-8: no server-clock day survives in the Chromia report code", () => {
     const src = read(path);
     assert.doesNotMatch(src, /getFullYear\(|getMonth\(|getDate\(|setHours\(|setDate\(/, path);
   }
-  // Both routes and the Downloads preview print the filed day.
-  for (const path of ["src/app/api/chromia/exports/route.ts", "src/app/api/chromia/exports/production/route.ts"]) {
+  // Both routes and the Downloads preview write one report (change 12), whose
+  // every day is the filed plant day (formatPlantReportDay).
+  for (const path of ["src/app/api/chromia/exports/route.ts", "src/app/api/chromia/exports/production/route.ts", "src/app/chromia/downloads/page.tsx"]) {
     const src = read(path);
     assert.doesNotMatch(src, /localDay\(/, path);
-    assert.match(src, /reportDay\(row\./, path);
+    assert.match(src, /loadDownloadReport\(/, path);
   }
-  const downloads = read("src/app/chromia/downloads/page.tsx");
-  assert.match(downloads, /render: \(row\) => formatPlantReportDay\(row\.date\),/);
-  assert.match(downloads, /render: \(row\) => formatPlantReportDay\(row\.receivedDate\),/);
+  assert.match(read("src/lib/chromia/download-reports.ts"), /const day = \(date: Date \| null \| undefined\) => \(date \? formatPlantReportDay\(date\) : DASH\);/);
   // Every report day is a plant calendar day read through one formatter.
   assert.equal(toPlantDateInput(plantDayRange("2026-10-31", "2026-10-31").to), "2026-10-31");
 });

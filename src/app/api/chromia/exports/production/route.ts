@@ -1,69 +1,27 @@
 import { type NextRequest } from 'next/server';
 
-import { DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
-import { slabStatusView } from '@/lib/chromia/slab-status-label';
 import { chromiaGate } from '@/lib/chromia/access';
 import { withErrorHandling } from '@/lib/chromia/api';
-import {
-  parseRangeQuery,
-  productionColumns,
-  productionFileName,
-  resolveRange,
-} from '@/lib/chromia/exports';
-import { loadProductionRows, type ProductionRow } from '@/lib/chromia/server/repositories/export-repository';
-import { reportDay, timeOnly, writeStyledWorkbook } from '@/lib/chromia/server/exports/sheet';
+import { parseRangeQuery, productionFileName, resolveRange } from '@/lib/chromia/exports';
+import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
+import { writeStyledWorkbook } from '@/lib/chromia/server/exports/sheet';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * Complete production for a period — every slab received, whatever happened.
- *
- * The outcome sheets answer "what did we dispatch". This one answers "what did
- * we make", which is a different question and needs no outcome filter at all.
+ * Downloads → Complete Production, as an Excel workbook (rebuilt 28 Oct 2026,
+ * change 12): Slab Records' columns in its order and its words, oldest
+ * production date first, S.No. 1…n — the very report the page previews.
  */
-function toValues(row: ProductionRow, index: number): (string | number)[] {
-  return [
-    index + 1,
-    reportDay(row.receivedDate),
-    row.batchNo,
-    row.slabNo,
-    row.baseMaterial,
-    row.design ?? '',
-    row.thicknessCm ?? '',
-    // The time of day only — the day is the Production Date column. Out-time is
-    // no longer carried.
-    timeOnly(row.inTime),
-    slabStatusView(row.status, row.disposition).label,
-    row.disposition ? DISPOSITION_LABELS[row.disposition] : '',
-    // Grade and the slab's own remark, straight from the Slab Records data.
-    row.grade ?? '',
-    row.remarks ?? '',
-    row.recalibrationCount,
-    reportDay(row.dispatchDate),
-    reportDay(row.stockDate),
-    reportDay(row.cutDate),
-  ];
-}
-
 export const GET = withErrorHandling(async (request: NextRequest) => {
-  // Middleware already stopped anyone without the CHROMIA role or an admin
-  // rank at the path prefix; this is the second layer, because a route handler
-  // that trusts middleware alone is one matcher edit away from being public.
   const gate = await chromiaGate();
   if (!gate.ok) return new Response(gate.status === 401 ? 'Unauthorized' : 'Forbidden', { status: gate.status });
 
-  const params = Object.fromEntries(request.nextUrl.searchParams.entries());
-  const range = resolveRange(parseRangeQuery(params));
-  const rows = await loadProductionRows(range);
+  const range = resolveRange(parseRangeQuery(Object.fromEntries(request.nextUrl.searchParams.entries())));
+  const report = await loadDownloadReport('PRODUCTION', range);
 
-  const buffer = writeStyledWorkbook({
-    sheetName: 'Production',
-    columns: productionColumns(),
-    rows: rows.map(toValues),
-  });
-  // rows.map passes (row, index) straight through — the S.No. is the row's
-  // position in the sheet.
+  const buffer = writeStyledWorkbook({ sheetName: 'Production', columns: report.columns, rows: report.rows });
 
   return new Response(new Uint8Array(buffer), {
     headers: {

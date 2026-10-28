@@ -8,6 +8,7 @@ import { EditLink } from '@/components/chromia/ui/edit-link';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { currentStatusOf } from '@/lib/chromia/current-status';
+import { formatSlabInTime } from '@/lib/chromia/download-reports';
 import {
   buildQuery,
   hasActiveFilters,
@@ -29,12 +30,6 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
   day: '2-digit',
   month: 'short',
   year: 'numeric', timeZone: PLANT_TIME_ZONE, });
-
-const dateTimeFmt = new Intl.DateTimeFormat('en-GB', {
-  day: '2-digit',
-  month: 'short',
-  hour: '2-digit',
-  minute: '2-digit', timeZone: PLANT_TIME_ZONE, });
 
 const { th, td, tdMuted, tdNum } = dataTable;
 
@@ -171,7 +166,8 @@ export default async function SlabsPage({
                         {slab.thicknessCm === null ? '—' : slab.thicknessCm}
                       </td>
                       <td className={`${tdMuted} whitespace-nowrap`}>
-                        {slab.inTime ? dateTimeFmt.format(slab.inTime) : '—'}
+                        {/* The Complete Production download's formatter, so the two read alike. */}
+                        {formatSlabInTime(slab.inTime)}
                       </td>
                       <td className={td}>
                         <GradeBadge grade={slab.currentGrade} />

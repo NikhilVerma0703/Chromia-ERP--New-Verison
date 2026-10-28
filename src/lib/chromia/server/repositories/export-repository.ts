@@ -1,300 +1,144 @@
-import { ChromiaDisposition as Disposition, ChromiaSlabStatus } from '@prisma/client';
-import type { ChromiaSlabGrade as SlabGrade, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
+import { ChromiaDisposition as Disposition, ChromiaSlabStatus as SlabStatus, ChromiaStockOutcome as StockOutcome, type Prisma } from '@prisma/client';
 
 import { prisma } from '@/lib/chromia/db';
-import { isWithinRangeDays, padRange, type DateRange, type ExportKind } from '@/lib/chromia/exports';
-import { toPlantReportDay } from '@/lib/chromia/plant-time';
+import { currentStatusOf } from '@/lib/chromia/current-status';
+import { buildReport, type BuiltReport, type ReportKind, type ReportRecord } from '@/lib/chromia/download-reports';
+import { isWithinRangeDays, padRange, type DateRange } from '@/lib/chromia/exports';
+import { boardRows } from '@/lib/chromia/recalibration-board';
+import { statusLabel } from '@/lib/chromia/recalibration-flow';
+import { manualRemark } from '@/lib/chromia/slab-remarks';
+import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 
 /**
- * Rows for the download sheets.
+ * The Downloads reports (rebuilt 28 Oct 2026, change 12): which slabs each
+ * holds, and its date. The columns, order and S.No. are buildReport's
+ * (download-reports.ts), so the page's preview and the Excel file are built
+ * from these very records.
  *
- * Every row carries the full slab record — the same columns the Slabs table
- * shows — plus the fields specific to that outcome. One row per outcome record,
- * so a slab stocked twice appears twice, which is what a movement sheet should
- * do.
+ * EACH REPORT IS THE PAGE IT NAMES, by the ERP's own rules:
+ *
+ *   Complete Production  every slab produced in the range — Slab Records'
+ *                        rows, Current Status by its rule (currentStatusOf)
+ *   In Stock             on the racks now (status IN_STOCK), by production date
+ *   Dispatched           status DISPATCHED, by its Dispatch Date
+ *   Approved             status APPROVED, by the date the Stockyard approved it
+ *   Sample Cutting       status SAMPLE_CUT, by the date it was cut — at QC or
+ *                        sent from the Stockyard
+ *   Recalibration        the Recalibration page's rows (one per slab, on its
+ *                        open or latest trip), by production date
+ *
+ * Each physical slab once (physical-slabs.ts): 14567 and 14567-A are one slab,
+ * where its latest record is. The status reports read the slabs in that status
+ * now — the same slabs their KPIs count — so a report never holds a slab that
+ * has since moved on, and never misses one dispatched straight from QC.
  */
-export interface ExportRow {
-  slabId: string;
-  /** The date this sheet is filtered on. */
-  date: Date;
-  batchNo: string;
-  slabNo: string;
-  baseMaterial: string;
-  design: string | null;
-  inTime: Date | null;
-  outTime: Date | null;
-  processingMinutes: number | null;
-  status: SlabStatus;
-  grade: SlabGrade | null;
-  disposition: Disposition | null;
-  cycleNumber: number;
-  recalibrationCount: number;
-  receivedDate: Date;
-  fullyPrintedDate: Date | null;
-  thicknessMm: string | null;
-  remarks: string | null;
-  /** Outcome-specific columns, already labelled for the sheet. */
-  extra: Record<string, string | number | null>;
-}
 
-/** The slab fields every sheet repeats. */
-const slabSelect = {
+const SLAB_FIELDS = {
   id: true,
   slabNo: true,
   status: true,
   currentGrade: true,
   currentDisposition: true,
-  currentCycleNumber: true,
-  recalibrationCount: true,
   receivedDate: true,
+  createdAt: true,
   currentThicknessMm: true,
   remarks: true,
   batch: { select: { batchNo: true } },
   baseMaterial: { select: { name: true } },
   plannedDesign: { select: { name: true, fileName: true } },
-  cycles: {
-    orderBy: { cycleNumber: 'desc' },
-    take: 1,
-    select: { inTime: true, outTime: true, processingMinutes: true, fullyPrintedDate: true },
+  cycles: { orderBy: { cycleNumber: 'desc' }, take: 1, select: { inTime: true } },
+  recalibrations: {
+    orderBy: { attemptNumber: 'asc' },
+    select: { attemptNumber: true, sentDate: true, receivedDate: true, restartedAt: true, reason: { select: { name: true } } },
   },
-} as const;
+  dispatches: { orderBy: [{ dispatchDate: 'desc' }, { createdAt: 'desc' }], take: 1, select: { dispatchDate: true } },
+  sampleCuttings: { orderBy: [{ cutDate: 'desc' }, { createdAt: 'desc' }], take: 1, select: { cutDate: true } },
+  stockEntries: {
+    where: { releaseOutcome: StockOutcome.APPROVED },
+    orderBy: [{ releasedAt: 'desc' }, { updatedAt: 'desc' }],
+    take: 1,
+    select: { releasedAt: true },
+  },
+} satisfies Prisma.ChromiaSlabSelect;
 
-type SlabPart = {
-  id: string;
-  slabNo: string;
-  status: SlabStatus;
-  currentGrade: SlabGrade | null;
-  currentDisposition: Disposition | null;
-  currentCycleNumber: number;
-  recalibrationCount: number;
-  receivedDate: Date;
-  currentThicknessMm: { toString(): string } | null;
-  remarks: string | null;
-  batch: { batchNo: string };
-  baseMaterial: { name: string };
-  plannedDesign: { name: string; fileName: string } | null;
-  cycles: {
-    inTime: Date | null;
-    outTime: Date | null;
-    processingMinutes: number | null;
-    fullyPrintedDate: Date | null;
-  }[];
+type Slab = Prisma.ChromiaSlabGetPayload<{ select: typeof SLAB_FIELDS }>;
+
+/** Which slabs a report reads — before its date range. */
+const REPORT_WHERE: Record<ReportKind, Prisma.ChromiaSlabWhereInput> = {
+  PRODUCTION: {},
+  STOCK: { status: SlabStatus.IN_STOCK },
+  DISPATCH: { status: SlabStatus.DISPATCHED },
+  APPROVED: { status: SlabStatus.APPROVED },
+  SAMPLE_CUTTING: { status: SlabStatus.SAMPLE_CUT },
+  // The Recalibration page's board: sent to recalibration, or ever on a trip.
+  RECALIBRATION: { OR: [{ currentDisposition: Disposition.RECALIBRATION }, { recalibrations: { some: {} } }] },
 };
 
-function baseRow(slab: SlabPart, date: Date, extra: ExportRow['extra']): ExportRow {
-  const cycle = slab.cycles[0];
+/** The report's own date for one slab — null when it has none (left out). */
+function eventDateOf(kind: ReportKind, slab: Slab): Date | null {
+  switch (kind) {
+    case 'DISPATCH':
+      return slab.dispatches[0]?.dispatchDate ?? null;
+    case 'APPROVED':
+      return slab.stockEntries[0]?.releasedAt ?? null;
+    case 'SAMPLE_CUTTING':
+      return slab.sampleCuttings[0]?.cutDate ?? null;
+    default:
+      return slab.receivedDate;
+  }
+}
 
-  return {
-    slabId: slab.id,
-    date,
+function recordOf(kind: ReportKind, slab: Slab, eventDate: Date): ReportRecord {
+  const trips = slab.recalibrations.map(({ reason: _reason, ...trip }) => trip);
+  const base: ReportRecord = {
+    eventDate,
+    productionDate: slab.receivedDate,
+    createdAt: slab.createdAt,
     batchNo: slab.batch.batchNo,
     slabNo: slab.slabNo,
     baseMaterial: slab.baseMaterial.name,
     design: slab.plannedDesign?.fileName ?? slab.plannedDesign?.name ?? null,
-    inTime: cycle?.inTime ?? null,
-    outTime: cycle?.outTime ?? null,
-    processingMinutes: cycle?.processingMinutes ?? null,
-    status: slab.status,
+    thicknessCm: slab.currentThicknessMm === null ? null : Number(slab.currentThicknessMm) / 10,
+    inTime: slab.cycles[0]?.inTime ?? null,
     grade: slab.currentGrade,
     disposition: slab.currentDisposition,
-    cycleNumber: slab.currentCycleNumber,
-    recalibrationCount: slab.recalibrationCount,
-    receivedDate: slab.receivedDate,
-    fullyPrintedDate: cycle?.fullyPrintedDate ?? null,
-    thicknessMm: slab.currentThicknessMm?.toString() ?? null,
-    remarks: slab.remarks,
-    extra,
+    // Slab Records shows the remark as saved; the status pages, without an
+    // echo of the outcome (manualRemark).
+    remarks: kind === 'PRODUCTION' ? slab.remarks : manualRemark(slab.remarks, slab.currentDisposition),
+    currentStatus: currentStatusOf(slab, trips).label,
+  };
+  if (kind !== 'RECALIBRATION') return base;
+
+  // The Recalibration page's row: the trip it is on (open or latest), and its reason.
+  const state = { id: slab.id, disposition: slab.currentDisposition, writtenOff: slab.status === SlabStatus.WASTE, trips };
+  const attemptNumber = boardRows([state], null)[0]?.attemptNumber ?? null;
+  const trip = slab.recalibrations.find((t) => t.attemptNumber === attemptNumber) ?? null;
+  return {
+    ...base,
+    currentStatus: statusLabel(state, slab.currentGrade),
+    attemptNumber,
+    sentDate: trip?.sentDate ?? null,
+    receivedDate: trip?.receivedDate ?? null,
+    reason: trip?.reason?.name ?? [...slab.recalibrations].reverse().find((t) => t.reason)?.reason?.name ?? null,
   };
 }
 
-/** Load one sheet's worth of rows, oldest first so the sheet reads chronologically. */
-export async function loadExportRows(kind: ExportKind, range: DateRange): Promise<ExportRow[]> {
-  // Padded for the query, then filtered exactly by calendar day — see
-  // `padRange` for why comparing instants alone loses whole months.
-  const window = padRange(range);
-  const onDay = (date: Date | null) => isWithinRangeDays(date, range);
-
-  if (kind === 'DISPATCH') {
-    // Dispatch is terminal: a genuinely dispatched slab always ends up with
-    // `currentDisposition = DISPATCH`. Requiring it here means a stray record
-    // can never put a stocked or sample-cut slab in the dispatch sheet.
-    //
-    // Stock and Sample Cutting deliberately carry no such guard — a stocked
-    // slab may legitimately be dispatched later, and it must still appear in
-    // the stock sheet for the period it was stocked.
-    const rows = await prisma.chromiaDispatch.findMany({
-      where: {
-        dispatchDate: window,
-        slab: { deletedAt: null, currentDisposition: Disposition.DISPATCH },
-      },
-      orderBy: [{ dispatchDate: 'asc' }],
-      include: { slab: { select: slabSelect } },
-    });
-
-    // Dispatch carries no extra columns — the in-charge records only the date.
-    return rows
-      .filter((row) => onDay(row.dispatchDate))
-      .map((row) => baseRow(row.slab, row.dispatchDate, {}));
-  }
-
-  if (kind === 'STOCK') {
-    const rows = await prisma.chromiaStockEntry.findMany({
-      where: { stockDate: window, slab: { deletedAt: null } },
-      orderBy: [{ stockDate: 'asc' }],
-      include: { slab: { select: slabSelect } },
-    });
-
-    // No extra columns. Stock carries the same eleven as every other sheet —
-    // the note typed at QC stays on the record and in the slab's history, but
-    // it is not something anybody reads a stock sheet for.
-    return rows.filter((row) => onDay(row.stockDate)).map((row) => baseRow(row.slab, row.stockDate, {}));
-  }
-
-  if (kind === 'SAMPLE_CUTTING') {
-    const rows = await prisma.chromiaSampleCutting.findMany({
-      where: { cutDate: window, slab: { deletedAt: null } },
-      orderBy: [{ cutDate: 'asc' }],
-      include: { slab: { select: slabSelect } },
-    });
-
-    // Sample cutting carries no extra columns — the cut date is the record.
-    return rows.filter((row) => onDay(row.cutDate)).map((row) => baseRow(row.slab, row.cutDate, {}));
-  }
-
-  /*
-   * Recalibration — the slabs still in the loop.
-   *
-   * Guarded on `currentDisposition = RECALIBRATION`, like Dispatch, and for a
-   * stronger reason: a slab that has been out twice and then passed QC is now
-   * Stock or Dispatch, and it has no business on a sheet of slabs awaiting
-   * recalibration. Its trips are history, not an outstanding job. The guard
-   * reads the slab's *current* outcome, so a slab drops off this sheet the
-   * moment QC clears it, without anything having to be tidied up by hand.
-   *
-   * Dated on when QC condemned the slab rather than when it was sent, because
-   * most rows here have never been sent — that is the point of the list.
-   *
-   * A slab WRITTEN OFF after its last attempt is not in the loop either (the
-   * code review of 20 Oct 2026, CHR-3). writeOff sets its status WASTE and
-   * leaves the outcome Recalibration, the last thing QC decided, so the guard
-   * on the outcome alone kept every written-off slab on this sheet. Its status
-   * is the answer: a slab that has ended is not awaiting anything.
-   */
-  const rows = await prisma.chromiaRecalibrationCycle.findMany({
+/** One report over a date range, oldest first on its own date, numbered 1…n. */
+export async function loadDownloadReport(kind: ReportKind, range: DateRange): Promise<BuiltReport> {
+  // A typed production date can be narrowed in the query; the other dates
+  // live on the outcome's record, so those reports filter after reading.
+  const byProductionDate = kind === 'PRODUCTION' || kind === 'STOCK' || kind === 'RECALIBRATION';
+  const slabs = await prisma.chromiaSlab.findMany({
     where: {
-      createdAt: window,
-      slab: {
-        deletedAt: null,
-        currentDisposition: Disposition.RECALIBRATION,
-        status: { not: ChromiaSlabStatus.WASTE },
-      },
+      AND: [await physicalSlabWhere(), REPORT_WHERE[kind], byProductionDate ? { receivedDate: padRange(range) } : {}],
     },
-    orderBy: [{ createdAt: 'asc' }],
-    include: {
-      reason: { select: { name: true } },
-      slab: { select: slabSelect },
-    },
+    select: SLAB_FIELDS,
   });
 
-  // The plant's day, by the same rule as the sheet's own date (CHR-8) — the
-  // server's getFullYear/getMonth/getDate is UTC.
-  const day = (date: Date | null) => (date ? toPlantReportDay(date) : null);
-
-  return rows
-    .filter((row) => onDay(row.createdAt))
-    .map((row) =>
-      baseRow(row.slab, row.createdAt, {
-        Attempt: row.attemptNumber,
-        Reason: row.reason?.name ?? null,
-        'Sent Date': day(row.sentDate),
-        'Received Date': day(row.receivedDate),
-      }),
-    );
-}
-
-/**
- * Complete production — every slab received in the period.
- *
- * Not filtered by outcome: this is the whole day's, week's or month's
- * production, whatever became of each slab. The three outcome dates ride along
- * so one row tells the slab's whole story without opening three files.
- */
-export interface ProductionRow {
-  slabId: string;
-  receivedDate: Date;
-  batchNo: string;
-  slabNo: string;
-  baseMaterial: string;
-  design: string | null;
-  /** Centimetres — the register's unit. The database stores millimetres. */
-  thicknessCm: number | null;
-  inTime: Date | null;
-  outTime: Date | null;
-  fullyPrintedDate: Date | null;
-  status: SlabStatus;
-  grade: SlabGrade | null;
-  disposition: Disposition | null;
-  recalibrationCount: number;
-  /** The slab's own remark — the same string Slab Records shows. */
-  remarks: string | null;
-  dispatchDate: Date | null;
-  stockDate: Date | null;
-  cutDate: Date | null;
-}
-
-export async function loadProductionRows(range: DateRange): Promise<ProductionRow[]> {
-  const rows = await prisma.chromiaSlab.findMany({
-    where: { deletedAt: null, receivedDate: padRange(range) },
-    orderBy: [{ receivedDate: 'asc' }, { slabNo: 'asc' }],
-    select: {
-      id: true,
-      slabNo: true,
-      status: true,
-      currentGrade: true,
-      currentDisposition: true,
-      recalibrationCount: true,
-      receivedDate: true,
-      currentThicknessMm: true,
-      remarks: true,
-      batch: { select: { batchNo: true } },
-      baseMaterial: { select: { name: true } },
-      plannedDesign: { select: { name: true, fileName: true } },
-      cycles: {
-        orderBy: { cycleNumber: 'desc' },
-        take: 1,
-        select: { inTime: true, outTime: true, fullyPrintedDate: true },
-      },
-      dispatches: { orderBy: { dispatchDate: 'desc' }, take: 1, select: { dispatchDate: true } },
-      stockEntries: { orderBy: { stockDate: 'desc' }, take: 1, select: { stockDate: true } },
-      sampleCuttings: { orderBy: { cutDate: 'desc' }, take: 1, select: { cutDate: true } },
-    },
-  });
-
-  return rows
-    .filter((row) => isWithinRangeDays(row.receivedDate, range))
-    .map((row) => {
-      const cycle = row.cycles[0];
-
-      return {
-        slabId: row.id,
-        receivedDate: row.receivedDate,
-        batchNo: row.batch.batchNo,
-        slabNo: row.slabNo,
-        baseMaterial: row.baseMaterial.name,
-        design: row.plannedDesign?.fileName ?? row.plannedDesign?.name ?? null,
-        thicknessCm:
-          row.currentThicknessMm === null ? null : Number(row.currentThicknessMm) / 10,
-        inTime: cycle?.inTime ?? null,
-        outTime: cycle?.outTime ?? null,
-        fullyPrintedDate: cycle?.fullyPrintedDate ?? null,
-        status: row.status,
-        grade: row.currentGrade,
-        disposition: row.currentDisposition,
-        recalibrationCount: row.recalibrationCount,
-        remarks: row.remarks,
-        dispatchDate: row.dispatches[0]?.dispatchDate ?? null,
-        stockDate: row.stockEntries[0]?.stockDate ?? null,
-        cutDate: row.sampleCuttings[0]?.cutDate ?? null,
-      };
-    });
+  const records: ReportRecord[] = [];
+  for (const slab of slabs) {
+    const date = eventDateOf(kind, slab);
+    if (date && isWithinRangeDays(date, range)) records.push(recordOf(kind, slab, date));
+  }
+  return buildReport(kind, records);
 }

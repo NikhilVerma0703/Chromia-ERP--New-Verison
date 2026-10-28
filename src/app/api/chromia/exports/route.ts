@@ -1,114 +1,31 @@
 import { type NextRequest } from 'next/server';
 
-import { DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
-import { slabStatusView } from '@/lib/chromia/slab-status-label';
 import { chromiaGate } from '@/lib/chromia/access';
 import { withErrorHandling } from '@/lib/chromia/api';
-import {
-  baseColumns,
-  baseFields,
-  EXPORT_KIND_LABELS,
-  exportFileName,
-  parseExportQuery,
-  resolveRange,
-  type BaseField,
-  type ExportColumn,
-  type ExportKind,
-} from '@/lib/chromia/exports';
-import { loadExportRows, type ExportRow } from '@/lib/chromia/server/repositories/export-repository';
-import { reportDay, timeOnly, writeStyledWorkbook } from '@/lib/chromia/server/exports/sheet';
+import { EXPORT_KIND_LABELS, exportFileName, parseExportQuery, resolveRange } from '@/lib/chromia/exports';
+import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
+import { writeStyledWorkbook } from '@/lib/chromia/server/exports/sheet';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * One sheet, one outcome, one date range.
- *
- * Grade, cycle, recalibration count, thickness, processing time and remarks are
- * deliberately absent — this is a movement sheet, not the slab's full record.
- * For everything, see the complete-production sheet.
+ * Downloads → By Slab Status, as an Excel workbook (rebuilt 28 Oct 2026,
+ * change 12). The very report the page previews (loadDownloadReport): the
+ * same columns, the same rows, oldest first, S.No. 1…n.
  */
-/**
- * The register works in centimetres; the database stores millimetres. Written
- * as a number, not text, so the column can be sorted and totalled in Excel.
- */
-function thicknessCm(mm: string | null): number | string {
-  if (mm === null) return '';
-  const parsed = Number(mm);
-  return Number.isFinite(parsed) ? parsed / 10 : '';
-}
-
-function baseCells(row: ExportRow): Record<BaseField, string | number> {
-  return {
-    date: reportDay(row.date),
-    batchNo: row.batchNo,
-    slabNo: row.slabNo,
-    baseMaterial: row.baseMaterial,
-    design: row.design ?? '',
-    thicknessCm: thicknessCm(row.thicknessMm),
-    receivedDate: reportDay(row.receivedDate),
-    // The time of day only — the day is the Production Date column. Out-time is
-    // no longer carried on any sheet.
-    inTime: timeOnly(row.inTime),
-    status: slabStatusView(row.status, row.disposition).label,
-    disposition: row.disposition ? DISPOSITION_LABELS[row.disposition] : '',
-  };
-}
-
-/** The one extra column added to every outcome sheet, read from the slab. */
-const SNO_COLUMN: ExportColumn = { label: 'S.No.', group: 'identity', width: 7 };
-const GRADE_COLUMN: ExportColumn = { label: 'Grade', group: 'state', width: 10 };
-
-/**
- * The values, in whatever order this sheet puts its columns.
- *
- * Read from `baseFields` — the same list the headings come from — so a column
- * cannot end up above the wrong values.
- */
-function toValues(row: ExportRow, kind: ExportKind, extraKeys: string[]): (string | number)[] {
-  const cells = baseCells(row);
-
-  return [
-    ...baseFields(kind).map((field) => cells[field]),
-    ...extraKeys.map((key) => {
-      const value = row.extra[key];
-      return value === null || value === undefined ? '' : value;
-    }),
-  ];
-}
-
 export const GET = withErrorHandling(async (request: NextRequest) => {
-  // Middleware already stopped anyone without the CHROMIA role or an admin
-  // rank at the path prefix; this is the second layer, because a route handler
-  // that trusts middleware alone is one matcher edit away from being public.
   const gate = await chromiaGate();
   if (!gate.ok) return new Response(gate.status === 401 ? 'Unauthorized' : 'Forbidden', { status: gate.status });
 
-  const params = Object.fromEntries(request.nextUrl.searchParams.entries());
-  const query = parseExportQuery(params);
+  const query = parseExportQuery(Object.fromEntries(request.nextUrl.searchParams.entries()));
   const range = resolveRange(query);
-
-  const rows = await loadExportRows(query.kind, range);
-
-  // Outcome-specific columns are discovered from the data, so Stock and Sample
-  // Cutting bring their own fields without the route knowing about them. S.No.
-  // leads the sheet and Grade — read from the slab record — closes it.
-  const extraKeys = Object.keys(rows[0]?.extra ?? {});
-  const columns: ExportColumn[] = [
-    SNO_COLUMN,
-    ...baseColumns(query.kind),
-    ...extraKeys.map((label) => ({ label, group: 'outcome' as const, width: 20 })),
-    GRADE_COLUMN,
-  ];
+  const report = await loadDownloadReport(query.kind, range);
 
   const buffer = writeStyledWorkbook({
-    sheetName: EXPORT_KIND_LABELS[query.kind],
-    columns,
-    rows: rows.map((row, index) => [
-      index + 1,
-      ...toValues(row, query.kind, extraKeys),
-      row.grade ?? '',
-    ]),
+    sheetName: EXPORT_KIND_LABELS[query.kind].slice(0, 31),
+    columns: report.columns,
+    rows: report.rows,
   });
 
   return new Response(new Uint8Array(buffer), {
