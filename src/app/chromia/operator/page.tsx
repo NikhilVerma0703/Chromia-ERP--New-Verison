@@ -225,7 +225,7 @@ export default async function OperatorPage({
         nowTime={toTimeInput(new Date())}
         fileNames={fileNames}
         batchNos={batchNos}
-        qc={qc}
+        qc={{ ...qc, allowTrimming: trips.length === 0 }}
         back={back}
         editing={
           selected

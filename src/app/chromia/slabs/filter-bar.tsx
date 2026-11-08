@@ -3,39 +3,25 @@ import Link from 'next/link';
 import { Field } from '@/components/chromia/ui';
 import { field, selectField, SectionCard } from '@/components/chromia/ui/form';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { DISPOSITION_LABELS, SLAB_STATUS_LABELS } from '@/lib/chromia/constants/process-stages';
-import { ChromiaDisposition as Disposition, ChromiaSlabGrade as SlabGrade, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
+import { DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
+import { ChromiaDisposition as Disposition, ChromiaSlabGrade as SlabGrade } from '@prisma/client';
 import { buildQuery, type SlabFilters } from '@/lib/chromia/slab-filters';
+
+import { DatePeriodField } from './date-period-field';
 
 interface Option {
   id: string;
   name: string;
 }
 
-/**
- * The states worth searching on.
- *
- * The full enum carries lifecycle states nobody looks for — a slab is
- * "Received" or "Graded" for minutes, and "Waste" and "On Hold" are not part of
- * this line's process. Offering them made the list long and the useful entries
- * hard to find.
- */
-const STATUS_CHOICES: readonly SlabStatus[] = [
-  SlabStatus.IN_PROCESS,
-  SlabStatus.DISPATCHED,
-  SlabStatus.IN_STOCK,
-  SlabStatus.SAMPLE_CUT,
-  SlabStatus.OUT_FOR_RECALIBRATION,
-  // Sent from the Stockyard as Approved (27 Oct 2026).
-  SlabStatus.APPROVED,
-];
-
-/** The four outcomes the QC section can actually record. */
+/** The outcomes the QC section can actually record. */
 const OUTCOME_CHOICES: readonly Disposition[] = [
   Disposition.DISPATCH,
   Disposition.STOCK,
   Disposition.SAMPLE_CUTTING,
   Disposition.RECALIBRATION,
+  // Grade C → Trimming (7 Nov 2026).
+  Disposition.TRIMMING,
 ];
 
 /** Every grade QC can decide. */
@@ -49,13 +35,10 @@ function toInputDate(value: Date | null): string {
  * Filter bar. A plain GET form — the whole filter state lives in the URL, so a
  * search is bookmarkable and shareable, and no client JavaScript is needed.
  *
- * Field order matches the results table: batch, slab, material, design, then
- * the state, date and grade filters.
- *
- * Three date fields, one column. Date From and Date To are the range;
- * Production Date is a single day for the far more common "what came in on
- * Tuesday?". They all read the slab's production date, and given together they
- * narrow each other rather than one quietly overriding the rest.
+ * Production Date is a single day for the common "what came in on Tuesday?";
+ * Date Period is a span (Today … Custom). Both read the slab's production
+ * date, and given together they narrow each other rather than one quietly
+ * overriding the other. Every filter given narrows the search (AND).
  */
 export function FilterBar({
   filters,
@@ -86,8 +69,21 @@ export function FilterBar({
           action={APP_ROUTES.slabs}
           className="flex flex-col gap-5"
         >
+          {/* The order asked for (7 Nov 2026, change 9): Production Date, Batch
+              Number, Slab Number, Base Material, File Name, Grade, QC Outcome,
+              Date Period. The Status filter is gone. */}
           <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Batch No." htmlFor="batchNo">
+            <Field label="Production Date" htmlFor="receivedOn">
+              <input
+                id="receivedOn"
+                name="receivedOn"
+                type="date"
+                defaultValue={toInputDate(filters.receivedOn)}
+                className={field}
+              />
+            </Field>
+
+            <Field label="Batch Number" htmlFor="batchNo">
               <input
                 id="batchNo"
                 name="batchNo"
@@ -97,7 +93,7 @@ export function FilterBar({
               />
             </Field>
 
-            <Field label="Slab No." htmlFor="slabNo">
+            <Field label="Slab Number" htmlFor="slabNo">
               <input
                 id="slabNo"
                 name="slabNo"
@@ -139,68 +135,6 @@ export function FilterBar({
               </select>
             </Field>
 
-            <Field label="Status" htmlFor="status">
-              <select
-                id="status"
-                name="status"
-                defaultValue={filters.status ?? ''}
-                className={selectField}
-              >
-                <option value="">Any</option>
-                {STATUS_CHOICES.map((status) => (
-                  <option key={status} value={status}>
-                    {SLAB_STATUS_LABELS[status]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Outcome" htmlFor="disposition">
-              <select
-                id="disposition"
-                name="disposition"
-                defaultValue={filters.disposition ?? ''}
-                className={selectField}
-              >
-                <option value="">Any</option>
-                {OUTCOME_CHOICES.map((disposition) => (
-                  <option key={disposition} value={disposition}>
-                    {DISPOSITION_LABELS[disposition]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Date From" htmlFor="receivedFrom">
-              <input
-                id="receivedFrom"
-                name="receivedFrom"
-                type="date"
-                defaultValue={toInputDate(filters.receivedFrom)}
-                className={field}
-              />
-            </Field>
-
-            <Field label="Date To" htmlFor="receivedTo">
-              <input
-                id="receivedTo"
-                name="receivedTo"
-                type="date"
-                defaultValue={toInputDate(filters.receivedTo)}
-                className={field}
-              />
-            </Field>
-
-            <Field label="Production Date" htmlFor="receivedOn">
-              <input
-                id="receivedOn"
-                name="receivedOn"
-                type="date"
-                defaultValue={toInputDate(filters.receivedOn)}
-                className={field}
-              />
-            </Field>
-
             <Field label="Grade" htmlFor="grade">
               <select
                 id="grade"
@@ -216,6 +150,29 @@ export function FilterBar({
                 ))}
               </select>
             </Field>
+
+            <Field label="QC Outcome" htmlFor="disposition">
+              <select
+                id="disposition"
+                name="disposition"
+                defaultValue={filters.disposition ?? ''}
+                className={selectField}
+              >
+                <option value="">Any</option>
+                {OUTCOME_CHOICES.map((disposition) => (
+                  <option key={disposition} value={disposition}>
+                    {DISPOSITION_LABELS[disposition]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <DatePeriodField
+              period={filters.period}
+              month={filters.month}
+              from={filters.period === 'CUSTOM' ? toInputDate(filters.receivedFrom) : ''}
+              to={filters.period === 'CUSTOM' ? toInputDate(filters.receivedTo) : ''}
+            />
           </div>
 
           <div className="border-line flex flex-wrap items-center justify-end gap-3 border-t pt-5">

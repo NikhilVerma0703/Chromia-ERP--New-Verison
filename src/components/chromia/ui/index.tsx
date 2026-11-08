@@ -109,7 +109,9 @@ export type Tone =
   | 'waste'
   | 'stock'
   | 'approved'
-  | 'processing';
+  | 'processing'
+  // Graded C → Trimming (7 Nov 2026).
+  | 'trimming';
 
 const TONE_CLASS: Record<Tone, string> = {
   neutral: 'text-muted bg-[color-mix(in_srgb,var(--muted)_12%,transparent)]',
@@ -122,6 +124,7 @@ const TONE_CLASS: Record<Tone, string> = {
   stock: 'text-status-stock bg-[color-mix(in_srgb,var(--color-status-stock)_13%,transparent)]',
   approved: 'text-status-approved bg-[color-mix(in_srgb,var(--color-status-approved)_13%,transparent)]',
   processing: 'text-status-processing bg-[color-mix(in_srgb,var(--color-status-processing)_13%,transparent)]',
+  trimming: 'text-status-trimming bg-[color-mix(in_srgb,var(--color-status-trimming)_13%,transparent)]',
 };
 
 const TONE_DOT: Record<Tone, string> = {
@@ -134,6 +137,7 @@ const TONE_DOT: Record<Tone, string> = {
   stock: 'bg-status-stock',
   approved: 'bg-status-approved',
   processing: 'bg-status-processing',
+  trimming: 'bg-status-trimming',
 };
 
 /** A status pill. Always carries its own text — never colour alone. */

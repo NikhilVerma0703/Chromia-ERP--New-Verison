@@ -17,15 +17,17 @@ import {
 } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
 import { searchSlabs } from '@/lib/chromia/server/repositories/slab-repository';
 import { loadReportCharts } from '@/lib/chromia/server/repositories/report-repository';
-import { parseTrendRange } from '@/lib/chromia/reports-charts';
+import { parseTrendRange, topDesignsWithOthers } from '@/lib/chromia/reports-charts';
 import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
 import { plantDayRange } from '@/lib/chromia/plant-time';
 import {
+  listSentFromStock,
   listStockedSlabs,
   listStockOutcomeRecords,
   stockyardKpis,
 } from '@/lib/chromia/server/repositories/stockyard-repository';
 import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
+import { listTrimmingRecords, trimmingPlaceSlabIds } from '@/lib/chromia/server/repositories/trimming-repository';
 
 /**
  * THE CHROMIA CONSISTENCY AUDIT (28 Oct 2026, change 10).
@@ -90,18 +92,27 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   for (const place of PRODUCTION_PLACES) {
     same(`Reports design-wise ${place} = Dashboard palette`, overall.places[place], reports.designs.reduce((n, d) => n + d.places[place], 0));
   }
+  // Change 6: the Top 10 and Others are every slab once; the designs are in volume order.
+  same('Reports Most Produced: Top 10 + Others = Total Produced', overall.produced, topDesignsWithOthers(reports.designs).reduce((n, b) => n + b.value, 0));
+  none(
+    'Reports designs are ordered by slabs produced',
+    reports.designs.filter((d, i) => i > 0 && d.total > reports.designs[i - 1]!.total).map((d) => d.design),
+  );
 
   // ── Downloads (change 12): over all time, each report is its KPI ──────
   const allTime = plantDayRange('2000-01-01', '2099-12-31');
-  const [dlProduction, dlStock, dlDispatch, dlApproved, dlCut, dlRecal] = await Promise.all(
-    (['PRODUCTION', 'STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION'] as const).map((kind) => loadDownloadReport(kind, allTime)),
+  const [dlProduction, dlStock, dlDispatch, dlApproved, dlCut, dlRecal, dlTrim] = await Promise.all(
+    (['PRODUCTION', 'STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION', 'TRIMMING'] as const).map((kind) => loadDownloadReport(kind, allTime)),
   );
+  // Change 8: Trimming Slabs is the Dashboard's Trimming place, and its KPI.
+  same('Downloads Trimming Slabs = Dashboard Trimming', overall.places.TRIMMING, dlTrim!.rows.length);
+  same('Downloads Trimming Slabs KPI = Dashboard Trimming', overall.places.TRIMMING, (await trimmingPlaceSlabIds()).length);
   same('Downloads Complete Production = Total Produced', overall.produced, dlProduction!.rows.length);
   same('Downloads In Stock = Current Stock', overall.currentStock, dlStock!.rows.length);
   same('Downloads Dispatched = Total Dispatched', overall.dispatched, dlDispatch!.rows.length);
   same('Downloads Approved = Total Approved', overall.approved, dlApproved!.rows.length);
   same('Downloads Sample Cutting = Total Sample Cutting', overall.sampleCutting, dlCut!.rows.length);
-  for (const report of [dlProduction!, dlStock!, dlDispatch!, dlApproved!, dlCut!, dlRecal!]) {
+  for (const report of [dlProduction!, dlStock!, dlDispatch!, dlApproved!, dlCut!, dlRecal!, dlTrim!]) {
     same(`Downloads ${report.kind}: S.No. runs 1…n`, report.rows.map((_, i) => i + 1).join(','), report.rows.map((r) => r[0]).join(','));
   }
   none('Downloads In Stock: every Current Status is In Stock', dlStock!.rows.filter((r) => r[10] !== 'In Stock').map((r) => String(r[3])));
@@ -138,10 +149,27 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   same('Tracking waiting = Recalibration Ready', board.kpis.ready, trackingKpis.waiting);
   same('Tracking out = Recalibration Pending', board.kpis.pending, trackingKpis.out);
 
+  // ── Dashboard: Total Current Stock's table (7 Nov 2026) ──────────────
+  const stockView = await loadProductionDashboard('stock', now);
+  same('Dashboard Current Stock table rows = its KPI', overall.currentStock, stockView.stock?.length ?? -1);
+  same('Dashboard Current Stock table rows are unique slabs', stockView.stock?.length ?? -1, unique((stockView.stock ?? []).map((s) => s.id)));
+
+  // ── Trimming (7 Nov 2026) ─────────────────────────────────────────────
+  // Every slab in the Dashboard's Trimming place has its Trimming record —
+  // the QC save opens it — and the table lists each record once.
+  const inTrimming = await trimmingPlaceSlabIds();
+  same('Trimming records of slabs in Trimming = Dashboard Trimming place', overall.places.TRIMMING, inTrimming.length);
+  const trimmingRows = await listTrimmingRecords();
+  same('Trimming table rows are unique records', trimmingRows.length, unique(trimmingRows.map((r) => r.id)));
+  const trimmingIds = new Set(inTrimming);
+  none('No Trimming slab is on the Recalibration page', board.states.filter((s) => trimmingIds.has(s.id)).map((s) => s.id));
+  none('No Trimming slab is in the Stockyard', inStock.filter((s) => trimmingIds.has(s.id)).map((s) => s.id));
+
   // ── Every slab's status agrees with its records ───────────────────────
   const slabs = await prisma.chromiaSlab.findMany({
     where: await physicalSlabWhere(),
     select: {
+      id: true,
       slabNo: true,
       status: true,
       currentDisposition: true,
@@ -176,6 +204,32 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
     slabs.filter((s) => s.recalibrations.some((t) => t.sentDate && !t.receivedDate) && s.status !== SlabStatus.OUT_FOR_RECALIBRATION).map((s) => s.slabNo),
   );
   none('A graded slab has a grade', slabs.filter((s) => s.currentDisposition !== null && s.currentGrade === null).map((s) => s.slabNo));
+  none(
+    'A Trimming slab is Grade C, with no recalibration record and no stock entry',
+    slabs
+      .filter((s) => s.currentDisposition === 'TRIMMING' && (s.currentGrade !== 'C' || s.recalibrations.length > 0 || open(s) > 0))
+      .map((s) => s.slabNo),
+  );
+
+  // Sent From Stock (change 11): each slab once, every row editable from the
+  // Stockyard, and no row the rack or a QC-direct slab.
+  const sentFromStock = await listSentFromStock();
+  none(
+    'Sent From Stock lists each slab once',
+    sentFromStock.map((s) => s.slabNo).filter((no, i, all) => all.indexOf(no) !== i),
+  );
+  const stockedNow = new Set(inStock.map((s) => s.id));
+  none('Sent From Stock lists no slab on the rack', sentFromStock.filter((s) => stockedNow.has(s.id)).map((s) => s.slabNo));
+  none(
+    'Sent From Stock rows were released from stock by the outcome they show',
+    sentFromStock
+      .filter((row) => {
+        const slab = slabs.find((s) => s.id === row.id);
+        const outcome = { DISPATCH: StockOutcome.DISPATCH, APPROVED: StockOutcome.APPROVED, SAMPLE_CUTTING: StockOutcome.SAMPLE_CUTTING }[row.outcome];
+        return !slab || !slab.stockEntries.some((e) => e.releaseOutcome === outcome);
+      })
+      .map((s) => s.slabNo),
+  );
 
   return checks;
 }

@@ -62,7 +62,14 @@ import {
   INCOMPLETE_PREVIOUS_DAY,
   SHIFT_TOO_LONG,
   amendsSavedRow,
+  anotherShiftError,
+  canStartAnotherShift,
   cleanOperatorName,
+  nightShiftStillOpen,
+  previousDayState,
+  shiftLengthError,
+  shiftOverlapError,
+  type PreviousDayState,
   closesOpenRow,
   dayKind,
   joinLines,
@@ -76,7 +83,9 @@ import {
   overnightShiftOpen,
   parseLeaveType,
   previousDay,
-  previousDayIncomplete,
+  SUM_OF_HOURS_LABEL,
+  minutesLabel,
+  sumWorkedMinutes,
   workedLabel,
 } from "./attendance.ts";
 import {
@@ -139,27 +148,44 @@ async function nextSortOrder(tx: Tx): Promise<number> {
 
 /* ── The day's register ────────────────────────────────────────────── */
 
+/** A shift row as the register screen and its rules read it. */
+interface StoredShift { shiftNo: number; lines: string; inTime: string | null; outTime: string | null }
+
 /**
- * Every active operator for a date, each with their row if one exists. The
- * register is the roster, not the rows: an operator with nothing entered yet
- * still has a line to fill in, which is the whole point of a register.
+ * Every active operator for a date, each with their shifts on it — one line per
+ * SHIFT (7 Nov 2026), in shift order. The register is the roster, not the
+ * rows: an operator with nothing entered yet still has a line to fill in,
+ * which is the whole point of a register.
  */
 async function dayRegister(date: string) {
   const prev = previousDay(date);
-  const [operators, days, held] = await Promise.all([
+  const [operators, days, previous] = await Promise.all([
     listOperators(),
-    prisma.attendanceDay.findMany({ where: { date } }),
-    heldForPreviousDay(date),
+    prisma.attendanceDay.findMany({ where: { date }, orderBy: { shiftNo: "asc" } }),
+    previousDayStates(date),
   ]);
-  const byOperator = new Map(days.map((d) => [d.operatorId, d]));
+  const byOperator = new Map<string, typeof days>();
+  for (const d of days) byOperator.set(d.operatorId, [...(byOperator.get(d.operatorId) ?? []), d]);
   return operators
     .filter((o) => o.isActive || byOperator.has(o.id))
-    .map((o) => {
-      const d = byOperator.get(o.id);
-      return {
+    .flatMap((o) => {
+      const shifts = byOperator.get(o.id) ?? [];
+      const state = previous.get(o.id) ?? { kind: "clear" as const };
+      /** The previous day is genuinely unfinished for this operator, so
+       *  nothing new may be entered for them until it is. */
+      const blocked = state.kind === "incomplete";
+      /** Last night's shift, still awaiting its Out-Time: not unfinished —
+       *  it is closed from this register (7 Nov 2026). */
+      const overnight = state.kind === "overnight"
+        ? { date: prev, shiftNo: state.row.shiftNo, lines: state.row.lines, inTime: state.row.inTime ?? "" }
+        : null;
+      const anotherShift = canStartAnotherShift(shifts);
+      const line = (d: (typeof days)[number] | undefined, shiftNo: number, last: boolean) => ({
         operatorId: o.id,
         operatorName: o.name,
         isActive: o.isActive,
+        /** Which shift of the date this line is — 1 for the first. */
+        shiftNo,
         lines: d?.lines ?? "",
         linesLabel: linesLabel(d?.lines),
         inTime: d?.inTime ?? "",
@@ -170,41 +196,52 @@ async function dayRegister(date: string) {
         outDate: outDate(date, d?.inTime, d?.outTime),
         worked: workedLabel(d?.inTime, d?.outTime),
         saved: Boolean(d),
-        /** The previous day is unfinished for this operator, so nothing new
-         *  may be entered for them until it is. */
-        blocked: held.has(o.id),
-        blockedDate: held.has(o.id) ? prev : "",
-        /** That unfinished row, so the page can offer the night shift its
-         *  "Mark out now" (closesOpenRow). Null when nothing is held. */
-        blockedRow: held.get(o.id) ?? null,
-      };
+        blocked,
+        blockedDate: blocked ? prev : "",
+        /** That unfinished row. Null when nothing is held. */
+        blockedRow: state.kind === "incomplete"
+          ? { lines: state.row.lines, inTime: state.row.inTime ?? "", outTime: state.row.outTime ?? "" }
+          : null,
+        overnight,
+        /** On the operator's last shift of the date: it is finished, so the
+         *  operator may be entered again for another shift. */
+        canAddShift: last && anotherShift && !blocked && !overnight,
+      });
+      if (shifts.length === 0) return [line(undefined, 1, true)];
+      return shifts.map((d, i) => line(d, d.shiftNo, i === shifts.length - 1));
     });
 }
 
 /**
- * The operators whose PREVIOUS day is unfinished — the ones held until it is
- * put right — each with that row. One pass for the whole register rather than
- * a query per operator.
+ * What each operator's PREVIOUS date leaves for this one (previousDayState):
+ * clear, a night shift still awaiting its Out-Time, or genuinely unfinished —
+ * the ones held until it is put right. One pass for the whole register rather
+ * than a query per operator. An operator with no row that day, or on recorded
+ * leave, is not held (see previousDayIncomplete).
  *
- * Two facts per operator, which is what previousDayIncomplete asks for: the
- * previous day's row, and whether they were on recorded leave that day. An
- * operator with no row that day is not held (see previousDayIncomplete).
+ * Whether last night's open shift can still be running is read on the plant's
+ * clock, and only when `date` is the plant's today.
  */
-async function heldForPreviousDay(date: string): Promise<Map<string, { lines: string; inTime: string; outTime: string }>> {
-  const held = new Map<string, { lines: string; inTime: string; outTime: string }>();
+async function previousDayStates(date: string): Promise<Map<string, PreviousDayState<StoredShift>>> {
+  const states = new Map<string, PreviousDayState<StoredShift>>();
   const prev = previousDay(date);
-  if (!prev) return held;
+  if (!prev) return states;
+  const at = { isToday: dayKind(date, todayPlant()) === "today", now: toPlantTimeInput(new Date()) };
   const [rows, leaves] = await Promise.all([
-    prisma.attendanceDay.findMany({ where: { date: prev }, select: { operatorId: true, lines: true, inTime: true, outTime: true } }),
+    prisma.attendanceDay.findMany({
+      where: { date: prev },
+      select: { operatorId: true, shiftNo: true, lines: true, inTime: true, outTime: true },
+    }),
     prisma.attendanceLeave.findMany({ where: { date: prev }, select: { operatorId: true } }),
   ]);
   const onLeave = new Set(leaves.map((l) => l.operatorId));
-  for (const r of rows) {
-    if (previousDayIncomplete({ row: r, onLeave: onLeave.has(r.operatorId) })) {
-      held.set(r.operatorId, { lines: r.lines, inTime: r.inTime ?? "", outTime: r.outTime ?? "" });
-    }
+  const byOperator = new Map<string, StoredShift[]>();
+  for (const { operatorId, ...row } of rows) byOperator.set(operatorId, [...(byOperator.get(operatorId) ?? []), row]);
+  for (const [operatorId, shifts] of byOperator) {
+    const state = previousDayState(shifts, onLeave.has(operatorId), at);
+    if (state.kind !== "clear") states.set(operatorId, state);
   }
-  return held;
+  return states;
 }
 
 /* ── Leave ─────────────────────────────────────────────────────────── */
@@ -309,7 +346,7 @@ async function filteredRows(f: AttendanceFilter, today: string) {
      sheet reads down the page exactly as the register does on screen. */
   const rows = await prisma.attendanceDay.findMany({
     where,
-    orderBy: [{ date: "asc" }, { operator: { sortOrder: "asc" } }, { operatorId: "asc" }],
+    orderBy: [{ date: "asc" }, { operator: { sortOrder: "asc" } }, { operatorId: "asc" }, { shiftNo: "asc" }],
     include: { operator: { select: { name: true } } },
   });
   return rows
@@ -321,6 +358,19 @@ async function filteredRows(f: AttendanceFilter, today: string) {
       "Out-Time": r.outTime ?? "-",
       "Total Working Hours": workedLabel(r.inTime, r.outTime),
     }) as Record<string, string | number>);
+}
+
+/**
+ * Sum of Total Working Hours (7 Nov 2026, change 7) — for the Attendance
+ * records of ONE operator, over every record the date filters select: the
+ * same rows filteredRows shows and the sheet carries, their minutes added
+ * (sumWorkedMinutes). Null when the filter is not one operator's attendance,
+ * where no sum is shown.
+ */
+async function sumOfHours(f: AttendanceFilter, today: string): Promise<string | null> {
+  if (f.type !== "ATTENDANCE" || !f.operatorId) return null;
+  const rows = await prisma.attendanceDay.findMany({ where: filterWhere(f, today), select: { inTime: true, outTime: true } });
+  return minutesLabel(sumWorkedMinutes(rows));
 }
 
 async function operatorNameOf(id: string): Promise<string> {
@@ -499,10 +549,14 @@ async function route(req: Request, segments: string[], method: string, rights: P
       return json({ date, rows: await dayRegister(date) });
     }
     if (method === "PUT") {
-      const b = body as { date?: unknown; operatorId?: unknown; lines?: unknown; inTime?: unknown; outTime?: unknown };
+      const b = body as { date?: unknown; operatorId?: unknown; shiftNo?: unknown; lines?: unknown; inTime?: unknown; outTime?: unknown };
       if (!isDate(b.date)) return bad("Pick a date.");
       const operatorId = String(b.operatorId ?? "");
       if (!operatorId) return bad("Pick an operator.");
+      /* Which shift of the date (7 Nov 2026). Left out, it is the first —
+         every save written before shifts were numbered meant that one. */
+      const shiftNo = b.shiftNo === undefined || b.shiftNo === null || b.shiftNo === "" ? 1 : Number(b.shiftNo);
+      if (!Number.isInteger(shiftNo) || shiftNo < 1 || shiftNo > 9) return bad("Pick a shift.");
       const inTime = timeOrNull(b.inTime);
       if (inTime === undefined) return bad("In-Time is not a valid time.");
       const lines = joinLines(Array.isArray(b.lines) ? b.lines.map(String) : String(b.lines ?? "").split(","));
@@ -516,9 +570,16 @@ async function route(req: Request, segments: string[], method: string, rights: P
       const nowPlant = toPlantTimeInput(new Date());
       const today = todayPlant();
       const existing = await prisma.attendanceDay.findUnique({
-        where: { date_operatorId: { date, operatorId } },
+        where: { date_operatorId_shiftNo: { date, operatorId, shiftNo } },
         select: { lines: true, inTime: true, outTime: true },
       });
+      /* The operator's other shifts on this date, and the previous date's —
+         what a new shift has to follow, and what no shift may overlap. */
+      const [dayShifts, previousShifts] = await Promise.all([
+        prisma.attendanceDay.findMany({ where: { date, operatorId }, select: { shiftNo: true, lines: true, inTime: true, outTime: true } }),
+        prisma.attendanceDay.findMany({ where: { date: previousDay(date), operatorId }, select: { shiftNo: true, lines: true, inTime: true, outTime: true } }),
+      ]);
+      const otherShifts = dayShifts.filter((s) => s.shiftNo !== shiftNo);
       /* LAST NIGHT'S OUT-TIME. The night shift marks in at 22:00 and out at
          06:00, and its row is dated the day it started — so at 06:00 the
          tablet's today is the next date. The tablet may put the Out-Time on
@@ -564,8 +625,22 @@ async function route(req: Request, segments: string[], method: string, rights: P
          Checked here and not only on the page, because the page is not what
          decides; and only for a NEW entry, so the row being complained about
          can still be put right. */
-      if (!existing && (await heldForPreviousDay(date)).has(operatorId)) {
-        return bad(INCOMPLETE_PREVIOUS_DAY);
+      if (!existing) {
+        /* A night shift from the day before that is still awaiting its Out
+           is not unfinished (7 Nov 2026) — but the operator is still on it,
+           so a new shift waits until it is marked out. */
+        const before = (await previousDayStates(date)).get(operatorId);
+        if (before?.kind === "incomplete") return bad(INCOMPLETE_PREVIOUS_DAY);
+        if (before?.kind === "overnight") return bad(nightShiftStillOpen(previousDay(date)));
+        /* ANOTHER SHIFT ON THE SAME DATE (7 Nov 2026): the next number only,
+           and only once the shift before it is finished and ended on this
+           date. A shift still open is genuinely incomplete and keeps holding. */
+        const expected = dayShifts.length === 0 ? 1 : Math.max(...dayShifts.map((s) => s.shiftNo)) + 1;
+        if (shiftNo !== expected) {
+          return bad(dayShifts.length === 0 ? "Enter the first shift of this date." : `The next shift of this date is shift ${expected}. Reload the page.`, 409);
+        }
+        const notYet = anotherShiftError(date, dayShifts);
+        if (notYet) return bad(notYet);
       }
 
       const inTimeChanged = !inTimeUnchanged(b.inTime as string, existing?.inTime);
@@ -589,6 +664,23 @@ async function route(req: Request, segments: string[], method: string, rights: P
         const refused = laterThanNowError(outTime, nowPlant, inTime);
         if (refused) return bad(refused);
       }
+      const outChanged = outTime !== (existing?.outTime ?? null);
+      /* LAST NIGHT'S OUT, TYPED BY THE PLANT IN-CHARGE (7 Nov 2026). On
+         yesterday's row an Out that ran past midnight is TODAY's time, so it
+         may not be later than now — the same guarantee as everywhere else. */
+      if (rights.amendSaved && kind === "past" && outTime && outChanged && outDate(date, inTime, outTime) === today) {
+        const refused = laterThanNowError(outTime, nowPlant);
+        if (refused) return bad(refused);
+      }
+      /* One shift is at most MAX_SHIFT_MINUTES and never of no length; and
+         no shift may overlap another of the same operator (7 Nov 2026).
+         Asked only of a time being entered or changed, so an old row saved
+         for its Line alone is never refused for what it already holds. */
+      if (inTimeChanged || outChanged) {
+        const refused = shiftLengthError(inTime, outTime)
+          ?? shiftOverlapError({ date, shift: { shiftNo, inTime, outTime }, previousDayRows: previousShifts, dayRows: otherShifts });
+        if (refused) return bad(refused);
+      }
 
       /* AND IT WRITES ONCE. The tablet may fill in what is blank — the
          morning's In-Time, the evening's Out-Time onto the same row — and may
@@ -602,28 +694,30 @@ async function route(req: Request, segments: string[], method: string, rights: P
       }
 
       const row = await prisma.$transaction(async (tx) => {
-        const before = await tx.attendanceDay.findUnique({ where: { date_operatorId: { date, operatorId } } });
-        /* The upsert IS the "no duplicates" rule: (date, operatorId) is unique in
-           the database, so the same day saved from Robo and from Chromia is one
-           row that the second save corrects rather than a second row. */
+        const before = await tx.attendanceDay.findUnique({ where: { date_operatorId_shiftNo: { date, operatorId, shiftNo } } });
+        /* The upsert IS the "no duplicates" rule: (date, operatorId, shiftNo)
+           is unique in the database, so the same shift saved twice is one row
+           that the second save corrects rather than a second row. */
         const saved = await tx.attendanceDay.upsert({
-          where: { date_operatorId: { date, operatorId } },
-          create: { date, operatorId, lines, inTime, outTime },
+          where: { date_operatorId_shiftNo: { date, operatorId, shiftNo } },
+          create: { date, operatorId, shiftNo, lines, inTime, outTime },
           update: { lines, inTime, outTime },
           include: { operator: { select: { name: true } } },
         });
         const was = before ? ` (was ${dayWords(before)})` : "";
+        const shift = shiftNo > 1 ? `, shift ${shiftNo}` : "";
         await trail(tx, "AttendanceDay",
-          `Attendance: ${saved.operator?.name ?? "an operator"} on ${onDay(date)} — ${dayWords(saved)}${was}`,
+          `Attendance: ${saved.operator?.name ?? "an operator"} on ${onDay(date)}${shift} — ${dayWords(saved)}${was}`,
           {
             action: before ? "attendance.day.edit" : "attendance.day.add",
-            before: before ? { id: before.id, date, operatorId, lines: before.lines, inTime: before.inTime, outTime: before.outTime } : null,
-            after: { id: saved.id, date, operatorId, lines: saved.lines, inTime: saved.inTime, outTime: saved.outTime },
+            before: before ? { id: before.id, date, operatorId, shiftNo, lines: before.lines, inTime: before.inTime, outTime: before.outTime } : null,
+            after: { id: saved.id, date, operatorId, shiftNo, lines: saved.lines, inTime: saved.inTime, outTime: saved.outTime },
           });
         return saved;
       });
       return json({
         operatorId,
+        shiftNo,
         lines: row.lines,
         linesLabel: linesLabel(row.lines),
         inTime: row.inTime ?? "",
@@ -740,6 +834,8 @@ async function route(req: Request, segments: string[], method: string, rights: P
       columns: columnsFor(f.type),
       rows,
       description: describeFilter(f, today, await operatorNameOf(f.operatorId)),
+      // One operator's attendance: the Sum of Total Working Hours under the table.
+      sumOfHours: await sumOfHours(f, today),
     });
   }
 
@@ -748,9 +844,24 @@ async function route(req: Request, segments: string[], method: string, rights: P
     const today = todayPlant();
     const rows = await filteredRows(f, today);
     const columns = [...columnsFor(f.type)];
-    const ws = XLSX.utils.json_to_sheet(rows, { header: columns });
+    /* One operator's attendance: the Sum of Total Working Hours goes on the
+       line right after the last record — its label in the first column, the
+       sum under Total Working Hours — styled as the sheet's total line. The
+       same figure the on-screen table shows under its rows. */
+    const sum = await sumOfHours(f, today);
+    const sheetRows = sum === null
+      ? rows
+      : [...rows, { [columns[0] as string]: SUM_OF_HOURS_LABEL, "Total Working Hours": sum } as Record<string, string | number>];
+    const ws = XLSX.utils.json_to_sheet(sheetRows, { header: columns });
     ws["!cols"] = widthsFor(f.type).map((wch) => ({ wch }));
-    styleRoboSheet(ws, { columnCount: columns.length });
+    if (sum !== null) {
+      // The label is longer than a date: let it run into the cells beside it.
+      ws["!merges"] = [...(ws["!merges"] ?? []), { s: { r: rows.length + 1, c: 0 }, e: { r: rows.length + 1, c: columns.length - 2 } }];
+    }
+    styleRoboSheet(ws, {
+      columnCount: columns.length,
+      rowRoles: sum === null ? undefined : [...rows.map(() => null), "grandTotal" as const],
+    });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, (f.type === "LEAVE" ? "Leave" : "Attendance").slice(0, 31));
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

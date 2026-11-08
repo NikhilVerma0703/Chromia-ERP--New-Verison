@@ -12,6 +12,8 @@
  *   Recalibration    graded C and not yet cleared, out or back, and the slabs
  *                    written off after their last attempt (the owner's
  *                    decision of 27 Oct 2026)
+ *   Trimming         graded C → Trimming on Slab Entry (GRADED, outcome
+ *                    TRIMMING; added 7 Nov 2026 — a seventh place)
  *   In-Processing    everything else: QC not done yet, or back on the line
  *                    after a recalibration trip
  *
@@ -31,6 +33,9 @@ export const PRODUCTION_PLACES = [
   'APPROVED',
   'SAMPLE_CUTTING',
   'RECALIBRATION',
+  // Graded C → Trimming on Slab Entry (7 Nov 2026). A place on the palette and
+  // the charts; its own KPI card comes with the Trimming page's dashboard.
+  'TRIMMING',
   'IN_PROCESSING',
 ] as const;
 
@@ -42,6 +47,7 @@ export const PLACE_LABELS: Record<ProductionPlace, string> = {
   APPROVED: 'Approved',
   SAMPLE_CUTTING: 'Sample Cutting',
   RECALIBRATION: 'Recalibration',
+  TRIMMING: 'Trimming',
   IN_PROCESSING: 'In-Processing',
 };
 
@@ -52,6 +58,7 @@ export const PLACE_COLORS: Record<ProductionPlace, string> = {
   APPROVED: '#0891b2', // cyan (was deep teal #0f766e — too close to Dispatched green, and too grey: change 11's palette check)
   SAMPLE_CUTTING: '#d97706', // amber
   RECALIBRATION: '#9333ea', // violet
+  TRIMMING: '#db2777', // pink (7 Nov 2026)
   IN_PROCESSING: '#64748b', // slate
 };
 
@@ -90,7 +97,9 @@ export function placeOf(slab: { status: Status | string; currentDisposition: str
     case 'WASTE':
       return 'RECALIBRATION';
     case 'GRADED':
-      return slab.currentDisposition === 'RECALIBRATION' ? 'RECALIBRATION' : 'IN_PROCESSING';
+      if (slab.currentDisposition === 'RECALIBRATION') return 'RECALIBRATION';
+      if (slab.currentDisposition === 'TRIMMING') return 'TRIMMING';
+      return 'IN_PROCESSING';
     default:
       return 'IN_PROCESSING';
   }

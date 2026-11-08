@@ -75,11 +75,11 @@ test("the rest of the module is untouched: QC and its Edit, dispatch, the stocky
   }
 });
 
-test("Slab Records shows Edit only — the Delete button is gone (28 Oct 2026); the delete action stays an admin's", () => {
+test("Slab Records shows Edit and Delete (change 5, 7 Nov 2026); the delete action stays an admin's", () => {
   const page = read("src/app/chromia/slabs/page.tsx");
   assert.match(page, /await requirePageUser\(\);/);
-  assert.doesNotMatch(page, /canDelete|RowActions|ConfirmDialog|deleteSlabRecordAction/);
-  assert.match(page, /<EditLink\n\s+href=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1&back=/);
+  assert.match(page, /<SlabActions\n\s+editHref=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1&back=/);
+  assert.match(read("src/lib/chromia/server/actions/slab-record.ts"), /requireChromiaAdmin\('delete a slab record'\)/);
 });
 
 test("Import shows the form and the Delete buttons only to an admin; everyone else still sees the history", () => {

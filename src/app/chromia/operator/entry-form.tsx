@@ -45,6 +45,8 @@ export interface QcReport {
   /** What was saved — pre-filled on the Edit path, and shown when the QC is settled. */
   initial?: { grade?: string; disposition?: string; reason?: string };
   message?: ReactNode;
+  /** Grade C may go to Trimming — false for a slab with a recalibration record (7 Nov 2026). */
+  allowTrimming?: boolean;
 }
 
 interface Props {
@@ -389,6 +391,7 @@ export function EntryForm({
             key={qcKey}
             optional={qc.mode === 'grade'}
             remarksField
+            allowTrimming={qc.allowTrimming ?? true}
             recalibrationReasons={qc.recalibrationReasons}
             errors={qcErrors}
             initial={{

@@ -17,9 +17,20 @@ export const dynamic = 'force-dynamic';
  * Outcome with its date, pre-filled from the saved record and corrected in
  * place (slab-edit-form.tsx, updateStockyardSlabAction).
  */
-export default async function StockyardEditPage({ params }: { params: Promise<{ slabId: string }> }) {
+export default async function StockyardEditPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slabId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requirePageUser();
   const { slabId } = await params;
+  // Opened from Sent From Stock (change 11, 8 Nov 2026): the outcome moves
+  // between Dispatched, Approved and Sample Cutting, and Update Slab returns
+  // to that table.
+  const fromSent = (await searchParams).from === 'sent';
+  const back = fromSent ? `${APP_ROUTES.stockyard}#sent-from-stock` : APP_ROUTES.stockyard;
   const loaded = await loadSlabEditProps(slabId);
   if (!loaded) notFound();
 
@@ -31,14 +42,14 @@ export default async function StockyardEditPage({ params }: { params: Promise<{ 
         description="Correct its entry, QC Report or Stock Outcome — the same slab record is updated"
         actions={
           <Link
-            href={APP_ROUTES.stockyard}
+            href={back}
             className="border-line surface hover:border-line-strong inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-medium transition-colors hover:bg-[var(--surface-muted)]"
           >
             Back to Stockyard
           </Link>
         }
       />
-      <StockyardSlabEditForm key={loaded.record.id} form="stockyard" returnTo={APP_ROUTES.stockyard} {...loaded.props} />
+      <StockyardSlabEditForm key={loaded.record.id} form="stockyard" returnTo={back} sentFromStock={fromSent} {...loaded.props} />
     </>
   );
 }

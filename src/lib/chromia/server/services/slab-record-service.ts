@@ -12,6 +12,8 @@ import {
 } from '@/lib/chromia/slab-record';
 import type { SlabRecordDeleteInput, SlabRecordEditInput } from '@/lib/chromia/validation/slab-record';
 import { isSlabNoTaken, loadSlabRecord } from '@/lib/chromia/server/repositories/slab-record-repository';
+import { SLAB_PHOTO_MODEL } from '@/lib/chromia/server/repositories/approved-repository';
+import { earlierEntries, sameSlabNo } from '@/lib/chromia/production-overview';
 import { resolveBaseMaterialId, resolveDesignId } from '@/lib/chromia/server/services/reference-service';
 
 const log = createLogger('slab-record');
@@ -224,38 +226,65 @@ export async function deleteSlabRecord(input: SlabRecordDeleteInput, userId: str
     );
   }
 
+  /*
+   * THE PHYSICAL SLAB, NOT ONLY ITS LATEST ENTRY (7 Nov 2026, change 5). A
+   * slab entered again carries a letter (14567, then 14567-A), and every page
+   * lists it once, on its latest record (physical-slabs.ts). Deleting only
+   * that record would bring the earlier one back onto every page — a deleted
+   * slab reappearing. So its earlier entries go with it.
+   */
+  const base = sameSlabNo(record.slabNo);
+  const candidates = await prisma.chromiaSlab.findMany({
+    where: { deletedAt: null, slabNo: { startsWith: base, mode: 'insensitive' } },
+    select: { id: true, slabNo: true, createdAt: true, batchId: true },
+  });
+  const earlier = [...earlierEntries(candidates.filter((s) => sameSlabNo(s.slabNo) === base)).entries()]
+    .filter(([, entry]) => entry.latestId === record.id)
+    .map(([id]) => candidates.find((s) => s.id === id)!);
+  const doomed = [{ id: record.id, slabNo: record.slabNo, batchId: record.batchId }, ...earlier];
+
   await prisma.$transaction(async (tx) => {
-    await tx.chromiaAuditLog.create({
-      data: {
-        entity: 'Slab',
-        entityId: record.id,
-        action: AuditAction.DELETE,
-        userId,
-        changes: {
-          slabNo: record.slabNo,
-          batchNo: record.batchNo,
-          baseMaterial: record.baseMaterial,
-          fileName: record.designFileName,
-          receivedDate: dayOf(record.receivedDate),
+    for (const slab of doomed) {
+      await tx.chromiaAuditLog.create({
+        data: {
+          entity: 'Slab',
+          entityId: slab.id,
+          action: AuditAction.DELETE,
+          userId,
+          changes: slab.id === record.id
+            ? {
+                slabNo: record.slabNo,
+                batchNo: record.batchNo,
+                baseMaterial: record.baseMaterial,
+                fileName: record.designFileName,
+                receivedDate: dayOf(record.receivedDate),
+              }
+            : { slabNo: slab.slabNo, earlierEntryOf: record.slabNo },
         },
-      },
-    });
+      });
 
-    await tx.chromiaBatch.update({
-      where: { id: record.batchId },
-      data: { totalSlabs: { decrement: 1 } },
-    });
+      await tx.chromiaBatch.update({
+        where: { id: slab.batchId },
+        data: { totalSlabs: { decrement: 1 } },
+      });
+    }
 
-    // One id, one row. Everything removed with it is the cascade of this slab's
-    // own children and nothing else.
-    await tx.chromiaSlab.delete({ where: { id: record.id } });
+    // Its photos (Approved Slabs) are not tied to it by a foreign key, so they
+    // are removed by hand rather than left pointing at nothing.
+    await tx.entryPhoto.deleteMany({ where: { model: SLAB_PHOTO_MODEL, recordId: { in: doomed.map((s) => s.id) } } });
+
+    // One id, one row each. Everything removed with them is the cascade of
+    // these slabs' own children — cycles, history, QC, grade decisions,
+    // recalibration trips, dispatch, stock, sample-cutting and trimming
+    // records — and nothing else.
+    await tx.chromiaSlab.deleteMany({ where: { id: { in: doomed.map((s) => s.id) } } });
   });
 
   // A deleted record was a record that should not exist — the CHROMIA mark it
   // made goes with it (guarded: only a slab actually CHROMIA moves back).
-  await unmarkSlabsChromia([record.slabNo], null);
+  await unmarkSlabsChromia(doomed.map((s) => s.slabNo), null);
 
-  log.warn({ slabId: record.id, slabNo: record.slabNo }, 'Slab record deleted');
+  log.warn({ slabId: record.id, slabNo: record.slabNo, earlierEntries: earlier.map((s) => s.slabNo) }, 'Slab record deleted');
 
-  return { slabNo: record.slabNo };
+  return { slabNo: record.slabNo, earlierEntries: earlier.map((s) => s.slabNo) };
 }

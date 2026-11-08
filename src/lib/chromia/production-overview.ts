@@ -175,3 +175,27 @@ export function processingSlabs<T extends OverviewSlab>(slabs: readonly T[], vie
     .filter((slab) => placeOf(slab) === 'IN_PROCESSING')
     .sort((a, b) => b.receivedDate.getTime() - a.receivedDate.getTime() || b.createdAt.getTime() - a.createdAt.getTime());
 }
+
+/**
+ * Overall Production's Total Current Stock KPI opens its table too (7 Nov
+ * 2026), the way the In-Processing KPIs do. Its URL value, beside theirs.
+ */
+export const STOCK_VIEW = 'stock' as const;
+export type DashboardView = ProcessingView | typeof STOCK_VIEW;
+
+/** Any table the Dashboard's KPIs can open, or null. */
+export function parseDashboardView(value: string | string[] | undefined): DashboardView | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw === STOCK_VIEW ? STOCK_VIEW : parseProcessingView(value);
+}
+
+/**
+ * The slabs Total Current Stock counts — exactly those, newest first: each
+ * physical slab once, in the STOCK place (overallProduction's own rule), so
+ * the table's row count is the KPI.
+ */
+export function currentStockSlabs<T extends OverviewSlab>(slabs: readonly T[]): T[] {
+  return latestPerSlab(slabs)
+    .filter((slab) => placeOf(slab) === 'STOCK')
+    .sort((a, b) => b.receivedDate.getTime() - a.receivedDate.getTime() || b.createdAt.getTime() - a.createdAt.getTime());
+}

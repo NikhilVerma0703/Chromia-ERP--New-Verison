@@ -6,7 +6,7 @@ import { ComboInput } from '@/components/chromia/ui/combo';
 
 import { Field } from '@/components/chromia/ui';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
-import { DISPOSITION_LABELS, GRADE_ALLOWED_DISPOSITIONS } from '@/lib/chromia/constants/process-stages';
+import { allowedDispositions, DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
 import { Disposition, SlabGrade } from '@/lib/chromia/constants/process-stages';
 
 import { field, FieldGrid, selectField } from './ui';
@@ -39,6 +39,12 @@ interface Props {
    * grade is required, as on every screen whose only job is grading.
    */
   optional?: boolean;
+  /**
+   * Grade C may go to Trimming as well as Recalibration (7 Nov 2026) — Slab
+   * Entry, for a slab with no recalibration record. Off (the default), Grade C
+   * goes to Recalibration only, as on the Recalibration page's re-grade.
+   */
+  allowTrimming?: boolean;
 }
 
 const GRADE_OPTIONS = [
@@ -48,8 +54,8 @@ const GRADE_OPTIONS = [
 ] as const;
 
 /** The outcome a grade decides by itself, when it allows exactly one. */
-function onlyOutcome(grade: string): string {
-  const allowed = grade ? GRADE_ALLOWED_DISPOSITIONS[grade as keyof typeof GRADE_ALLOWED_DISPOSITIONS] : [];
+function onlyOutcome(grade: string, trimming: boolean): string {
+  const allowed = grade ? allowedDispositions(grade, { trimming }) : [];
   return allowed.length === 1 ? allowed[0] : '';
 }
 
@@ -58,7 +64,8 @@ function onlyOutcome(grade: string): string {
  *
  *   Grade A → Stock                       (set by the grade)
  *   Grade B → Stock · Sample Cutting      (chosen)
- *   Grade C → Recalibration               (set by the grade)
+ *   Grade C → Recalibration · Trimming    (chosen; Recalibration only where
+ *                                          allowTrimming is off)
  *
  * QC decides the grade and the outcome that grade allows, and nothing else at
  * the bench: the dates a slab is stocked or cut are captured on those sections'
@@ -71,23 +78,28 @@ function onlyOutcome(grade: string): string {
  * plain optional field that stays empty unless somebody types in it, kept
  * apart from the outcome.
  */
-export function QcSection({ recalibrationReasons, errors, initial, remarksField = false, optional = false }: Props) {
+export function QcSection({
+  recalibrationReasons,
+  errors,
+  initial,
+  remarksField = false,
+  optional = false,
+  allowTrimming = false,
+}: Props) {
   const [grade, setGrade] = useState<string>(initial?.grade ?? '');
   const [disposition, setDisposition] = useState<string>(
-    initial?.disposition || onlyOutcome(initial?.grade ?? ''),
+    initial?.disposition || onlyOutcome(initial?.grade ?? '', allowTrimming),
   );
   const [remarks, setRemarks] = useState(initial?.slabRemarks ?? '');
   const [reasonName, setReasonName] = useState(initial?.reasonName ?? '');
 
-  const allowed = grade
-    ? GRADE_ALLOWED_DISPOSITIONS[grade as keyof typeof GRADE_ALLOWED_DISPOSITIONS]
-    : [];
-  // A and C decide their outcome; only B asks for one.
+  const allowed = grade ? allowedDispositions(grade, { trimming: allowTrimming }) : [];
+  // A grade with one outcome sets it; B, and C where Trimming is offered, ask.
   const fixed = allowed.length === 1;
 
   function chooseGrade(value: string) {
     setGrade(value);
-    setDisposition(onlyOutcome(value));
+    setDisposition(onlyOutcome(value, allowTrimming));
     setReasonName('');
   }
 

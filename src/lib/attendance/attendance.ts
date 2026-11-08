@@ -9,9 +9,10 @@
  * Robo and Chromia share the operators, so they share the register: the same
  * three attendance_* tables, read and written by both. Nothing is copied
  * between them and nothing has to be kept in step, because there is only ever
- * one row — (date, operator) is unique in the database, so the same day
- * entered from either screen is the same record, and an edit on one screen IS
- * the edit on the other.
+ * one row — (date, operator, shift) is unique in the database, so the same
+ * shift entered from either screen is the same record, and an edit on one
+ * screen IS the edit on the other. (A second shift on one date has its own
+ * row, shift 2 — 7 Nov 2026.)
  *
  * Times are "HH:MM" and dates yyyy-mm-dd, the convention the shop floor
  * already uses. No Date object, no timezone, anywhere in this file.
@@ -102,6 +103,27 @@ export function workedLabel(inTime: string | null | undefined, outTime: string |
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+}
+
+/** The label under every individual operator's Downloads results (7 Nov 2026). */
+export const SUM_OF_HOURS_LABEL = "Sum of Total Working Hours";
+
+/** Minutes as the register writes hours: "33h 46m", "8h", "45m", and "0h" for none. */
+export function minutesLabel(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0 && m === 0) return "0h";
+  return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+}
+
+/**
+ * The sum of Total Working Hours over a set of shifts — each shift's own
+ * minutes (workedMinutes, the figure its row shows), added as minutes, so
+ * 9h 12m + 12h 7m + 12h 27m is 33h 46m exactly. A shift with no hours to show
+ * (not marked out yet) adds nothing, as its row reads "-".
+ */
+export function sumWorkedMinutes(rows: readonly { inTime?: string | null; outTime?: string | null }[]): number {
+  return rows.reduce((sum, row) => sum + (workedMinutes(row.inTime, row.outTime) ?? 0), 0);
 }
 
 /* ── Which day a row belongs to ────────────────────────────────────── */
@@ -272,6 +294,175 @@ export function nightShiftRow<R extends { inTime?: string | null; outTime?: stri
   if (!inTime) return null;
   if (outTime) return rollsOvernight(inTime, outTime) ? lastNight : null;
   return overnightShiftOpen(inTime, now) ? lastNight : null;
+}
+
+/* ── Night shifts and more than one shift a day (7 Nov 2026) ───────── */
+
+/** dd/mm/yyyy for a yyyy-mm-dd — how the register's sentences name a day. */
+const dmyOf = (date: string | null | undefined) =>
+  String(date ?? "").replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1");
+
+/** One shift's row, as these rules read it. `shiftNo` is 1 for the first
+ *  shift of a date, 2 for the next, and so on. */
+export interface ShiftRow {
+  shiftNo?: number | null;
+  lines?: string | null;
+  inTime?: string | null;
+  outTime?: string | null;
+}
+
+const txt = (v: string | null | undefined) => String(v ?? "").trim();
+const byShift = <R extends ShiftRow>(rows: readonly R[]) => [...rows].sort((a, b) => (a.shiftNo ?? 1) - (b.shiftNo ?? 1));
+
+/**
+ * Is this open row a NIGHT SHIFT STILL AWAITING ITS OUT-TIME, rather than an
+ * unfinished day?
+ *
+ * The owner's case (7 Nov 2026): In at 18:00 on the 7th, Out at 06:00 on the
+ * 8th. On the 8th the row from the 7th is open — that is the shift running,
+ * not an entry somebody forgot. It is one when:
+ *   • it has an In-Time and no Out-Time;
+ *   • the In is an evening In (EVENING_SHIFT_FROM, 18:00, or later);
+ *   • and, read on the plant's today, the shift could still be running
+ *     (overnightShiftOpen: no longer than MAX_SHIFT_MINUTES from the In).
+ * Read for an earlier date (the In-Charge putting a past day right), "now"
+ * has no bearing, and an open evening row is the night shift waiting for the
+ * Out that was never recorded — closed from the next day like any other.
+ */
+export function overnightAwaitingOut(
+  row: ShiftRow | null | undefined,
+  at: { isToday: boolean; now: string },
+): boolean {
+  if (!row) return false;
+  const inTime = txt(row.inTime);
+  if (!inTime || txt(row.outTime)) return false;
+  const a = toMins(inTime);
+  if (a === null || a < (toMins(EVENING_SHIFT_FROM) as number)) return false;
+  return at.isToday ? overnightShiftOpen(inTime, at.now) : true;
+}
+
+/** What the previous date leaves for the next one. */
+export type PreviousDayState<R extends ShiftRow> =
+  | { kind: "clear" }
+  /** Its last shift is a night shift awaiting its Out: close it, then go on. */
+  | { kind: "overnight"; row: R }
+  /** Genuinely unfinished (previousDayIncomplete): held until it is put right. */
+  | { kind: "incomplete"; row: R };
+
+/**
+ * The previous date's shifts, read for the next date's register. Leave, and
+ * no row at all, hold nobody (previousDayIncomplete says why). Of the rest,
+ * only the LAST shift may be the night shift still running; any other open or
+ * half-written shift is unfinished attendance, as before.
+ */
+export function previousDayState<R extends ShiftRow>(
+  rows: readonly R[],
+  onLeave: boolean,
+  at: { isToday: boolean; now: string },
+): PreviousDayState<R> {
+  if (onLeave || rows.length === 0) return { kind: "clear" };
+  const ordered = byShift(rows);
+  const last = ordered[ordered.length - 1] as R;
+  for (const row of ordered) {
+    if (!previousDayIncomplete({ row })) continue;
+    if (row === last && overnightAwaitingOut(row, at)) return { kind: "overnight", row };
+    return { kind: "incomplete", row };
+  }
+  return { kind: "clear" };
+}
+
+/** Said when a new shift is tried while last night's is still running. */
+export function nightShiftStillOpen(date: string): string {
+  return `The night shift from ${dmyOf(date)} has no Out-Time yet. Mark it out first.`;
+}
+
+/**
+ * May another shift be started on this date, after the shifts already on it?
+ * Only once the last one is finished — an In and an Out — and only if it did
+ * not run past midnight, because then it ended on the NEXT date and a second
+ * shift on this one would overlap it.
+ */
+export function canStartAnotherShift(dayRows: readonly ShiftRow[]): boolean {
+  if (dayRows.length === 0) return false;
+  const last = byShift(dayRows)[dayRows.length - 1] as ShiftRow;
+  return Boolean(txt(last.inTime)) && Boolean(txt(last.outTime)) && !rollsOvernight(last.inTime, last.outTime);
+}
+
+/** Why another shift cannot be started on this date, or null when it can. */
+export function anotherShiftError(date: string, dayRows: readonly ShiftRow[]): string | null {
+  if (dayRows.length === 0 || canStartAnotherShift(dayRows)) return null;
+  const last = byShift(dayRows)[dayRows.length - 1] as ShiftRow;
+  const n = last.shiftNo ?? 1;
+  if (txt(last.inTime) && txt(last.outTime)) {
+    return `Shift ${n} on ${dmyOf(date)} ran past midnight, so another shift cannot start on that date.`;
+  }
+  return `Shift ${n} on ${dmyOf(date)} is not finished yet. Mark it out before starting another shift.`;
+}
+
+/**
+ * Why this shift's times would overlap another shift of the same operator, or
+ * null. Every time here is on the shift's own date, the way the register
+ * holds them:
+ *   • its In may not be before the last Out that fell on this date — last
+ *     night's shift ending at 06:00, or an earlier shift of this date;
+ *   • its Out (when it does not run past midnight) may not be after the In of
+ *     a later shift on this date.
+ */
+export function shiftOverlapError(input: {
+  date: string;
+  shift: ShiftRow;
+  /** The previous date's shifts — one may have ended this morning. */
+  previousDayRows: readonly ShiftRow[];
+  /** The other shifts of this date. */
+  dayRows: readonly ShiftRow[];
+}): string | null {
+  const n = input.shift.shiftNo ?? 1;
+  const inM = toMins(input.shift.inTime);
+  const outM = toMins(input.shift.outTime);
+
+  const endsOnThisDate: number[] = [];
+  for (const row of input.previousDayRows) {
+    if (rollsOvernight(row.inTime, row.outTime)) endsOnThisDate.push(toMins(row.outTime) as number);
+  }
+  for (const row of input.dayRows) {
+    if ((row.shiftNo ?? 1) < n && txt(row.outTime) && !rollsOvernight(row.inTime, row.outTime)) {
+      endsOnThisDate.push(toMins(row.outTime) as number);
+    }
+  }
+  if (inM !== null && endsOnThisDate.length > 0) {
+    const lastEnd = Math.max(...endsOnThisDate);
+    if (inM < lastEnd) {
+      const at = `${String(Math.floor(lastEnd / 60)).padStart(2, "0")}:${String(lastEnd % 60).padStart(2, "0")}`;
+      return `${INVALID_TIME} The previous shift ended at ${at}, so this In-Time cannot be earlier.`;
+    }
+  }
+
+  if (outM !== null && inM !== null && !rollsOvernight(input.shift.inTime, input.shift.outTime)) {
+    for (const row of input.dayRows) {
+      const laterIn = toMins(row.inTime);
+      if ((row.shiftNo ?? 1) > n && laterIn !== null && outM > laterIn) {
+        return `${INVALID_TIME} Shift ${row.shiftNo} starts at ${txt(row.inTime)}, so this Out-Time cannot be later.`;
+      }
+    }
+  }
+  if (inM !== null && outM !== null && rollsOvernight(input.shift.inTime, input.shift.outTime)) {
+    if (input.dayRows.some((row) => (row.shiftNo ?? 1) > n)) {
+      return `${INVALID_TIME} A later shift is already on this date, so this one cannot run past midnight.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Why an In and an Out together cannot be one shift, or null. Equal times are
+ * no shift at all, and more than MAX_SHIFT_MINUTES is a mistyped pair
+ * (workedMinutes reads both as nothing) — refused rather than stored as a
+ * shift with no hours.
+ */
+export function shiftLengthError(inTime: string | null | undefined, outTime: string | null | undefined): string | null {
+  if (!txt(inTime) || !txt(outTime) || toMins(inTime) === null || toMins(outTime) === null) return null;
+  if (workedMinutes(inTime, outTime) !== null) return null;
+  return `${INVALID_TIME} ${txt(inTime)} to ${txt(outTime)} is not a shift — at most ${MAX_SHIFT_MINUTES / 60} hours, and the Out-Time cannot equal the In-Time.`;
 }
 
 /* ── The Plant In-Charge's times on today's row ────────────────────── */

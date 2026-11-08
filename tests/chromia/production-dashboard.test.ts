@@ -6,6 +6,8 @@ import { PLACE_COLORS, PRODUCTION_PLACES, placeOf } from '@/lib/chromia/constant
 import {
   latestPerSlab,
   overallProduction,
+  currentStockSlabs,
+  parseDashboardView,
   parseProcessingView,
   processingSlabs,
   sameSlabNo,
@@ -85,6 +87,16 @@ describe('Overall Production and the palette', () => {
     expect(placeOf({ status: 'RECEIVED_FROM_RECALIBRATION', currentDisposition: 'RECALIBRATION' })).toBe('RECALIBRATION');
     expect(placeOf({ status: 'UNDER_INSPECTION', currentDisposition: null })).toBe('IN_PROCESSING');
   });
+
+  it('a slab graded C → Trimming is in the Trimming place, not In-Processing or Recalibration (7 Nov 2026)', () => {
+    expect(placeOf({ status: 'GRADED', currentDisposition: 'TRIMMING' })).toBe('TRIMMING');
+    const withTrim = overallProduction([...yard, slab('109', 'GRADED', { currentDisposition: 'TRIMMING', currentGrade: 'C' })]);
+    expect(withTrim.places.TRIMMING).toBe(1);
+    expect(withTrim.inProcessing).toBe(overall.inProcessing);
+    expect(withTrim.places.RECALIBRATION).toBe(overall.places.RECALIBRATION);
+    expect(withTrim.produced).toBe(overall.produced + 1);
+    expect(PRODUCTION_PLACES.reduce((n, place) => n + withTrim.places[place], 0)).toBe(withTrim.produced);
+  });
 });
 
 describe("Today's Production", () => {
@@ -121,6 +133,25 @@ describe('the clickable In-Processing KPIs', () => {
     expect(parseProcessingView('nonsense')).toBeNull();
   });
 
+  it('Total Current Stock opens the table of exactly the slabs it counts (7 Nov 2026)', () => {
+    const rack = [
+      ...yard,
+      slab('110', 'IN_STOCK', { currentDisposition: 'STOCK', currentGrade: 'B', receivedDate: d('2026-10-25') }),
+      // Entered again: 111 stocked, then 111-A back on the line — one slab, not in stock.
+      slab('111', 'IN_STOCK', { currentDisposition: 'STOCK', currentGrade: 'A' }),
+      slab('111-A', 'IN_PROCESS'),
+    ];
+    const rows = currentStockSlabs(rack);
+    expect(rows).toHaveLength(overallProduction(rack).currentStock);
+    expect(rows.map((s) => s.slabNo)).toEqual(['100', '110']); // newest Production Date first
+    expect(parseDashboardView('stock')).toBe('stock');
+    expect(parseDashboardView('processing')).toBe('processing');
+    expect(parseDashboardView('today-processing')).toBe('today-processing');
+    expect(parseDashboardView('nonsense')).toBeNull();
+    // The In-Processing parser is unchanged: 'stock' is not one of its views.
+    expect(parseProcessingView('stock')).toBeNull();
+  });
+
   it('the page: two headings, six and six KPIs, the In-Processing ones links', () => {
     const page = read('src/app/chromia/dashboard/page.tsx');
     expect([...page.matchAll(/<SectionHeading[^>]*>([^<]+)<\/SectionHeading>/g)].map((m) => m[1])).toEqual([
@@ -136,18 +167,19 @@ describe('the clickable In-Processing KPIs', () => {
     expect(page).not.toMatch(/Where they are/);
     expect(page).toMatch(/<KpiLink view="processing"/);
     expect(page).toMatch(/<KpiLink view="today-processing"/);
+    expect(page).toMatch(/<KpiLink view="stock"/);
   });
 });
 
 describe('one palette across the ERP', () => {
-  it('six distinct colours', () => {
-    expect(new Set(Object.values(PLACE_COLORS)).size).toBe(6);
+  it('seven distinct colours — the six places and Trimming (7 Nov 2026)', () => {
+    expect(new Set(Object.values(PLACE_COLORS)).size).toBe(7);
   });
 
   it('the CSS tokens and Tailwind colours are the palette’s', () => {
     const css = read('src/app/globals.css');
     const tw = read('tailwind.config.ts');
-    const token = { STOCK: 'stock', DISPATCHED: 'done', APPROVED: 'approved', SAMPLE_CUTTING: 'hold', RECALIBRATION: 'recalibration', IN_PROCESSING: 'processing' } as const;
+    const token = { STOCK: 'stock', DISPATCHED: 'done', APPROVED: 'approved', SAMPLE_CUTTING: 'hold', RECALIBRATION: 'recalibration', TRIMMING: 'trimming', IN_PROCESSING: 'processing' } as const;
     for (const place of PRODUCTION_PLACES) {
       expect(css).toContain(`--color-status-${token[place]}: ${PLACE_COLORS[place]};`);
       expect(tw).toMatch(new RegExp(`${token[place]}: "${PLACE_COLORS[place]}"`));

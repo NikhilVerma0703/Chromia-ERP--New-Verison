@@ -5,6 +5,9 @@ import { ChromiaDisposition as Disposition, ChromiaSlabGrade as SlabGrade, Chrom
 import {
   buildQuery,
   buildSlabWhere,
+  DATE_PERIOD_LABELS,
+  DATE_PERIODS,
+  datePeriodDays,
   hasActiveFilters,
   pageCount,
   parseSlabFilters,
@@ -26,9 +29,10 @@ describe('parsing search params', () => {
     expect(parseSlabFilters({ slabNo: 'x'.repeat(200) }).slabNo).toHaveLength(80);
   });
 
-  it('accepts only valid enum values', () => {
-    expect(parseSlabFilters({ status: SlabStatus.IN_STOCK }).status).toBe(SlabStatus.IN_STOCK);
-    expect(parseSlabFilters({ status: 'NONSENSE' }).status).toBeNull();
+  it('accepts only valid enum values — and no Status filter at all (change 9)', () => {
+    expect('status' in parseSlabFilters({ status: SlabStatus.IN_STOCK })).toBe(false);
+    expect(buildSlabWhere(parseSlabFilters({ status: SlabStatus.IN_STOCK }))).toEqual({ deletedAt: null });
+    expect(parseSlabFilters({ disposition: 'TRIMMING' }).disposition).toBe('TRIMMING');
     expect(parseSlabFilters({ grade: 'D' }).grade).toBeNull();
     expect(parseSlabFilters({ grade: SlabGrade.C }).grade).toBe(SlabGrade.C);
   });
@@ -78,14 +82,12 @@ describe('building the where clause', () => {
   it('maps each filter to its column', () => {
     const where = buildSlabWhere(
       parseSlabFilters({
-        status: SlabStatus.GRADED,
         grade: SlabGrade.B,
         disposition: Disposition.STOCK,
         out: '1',
       }),
     );
     expect(where).toMatchObject({
-      status: SlabStatus.GRADED,
       currentGrade: SlabGrade.B,
       currentDisposition: Disposition.STOCK,
       isRecalibrationOut: true,
@@ -150,10 +152,11 @@ describe('building the where clause', () => {
 
 describe('query building and paging', () => {
   it('drops empty values and keeps the set ones', () => {
-    const query = buildQuery(parseSlabFilters({ slabNo: '8547', status: SlabStatus.IN_STOCK }));
+    const query = buildQuery(parseSlabFilters({ slabNo: '8547', disposition: 'TRIMMING' }));
     expect(query).toContain('slabNo=8547');
-    expect(query).toContain(`status=${SlabStatus.IN_STOCK}`);
+    expect(query).toContain('disposition=TRIMMING');
     expect(query).not.toContain('grade=');
+    expect(query).not.toContain('status=');
   });
 
   it('overrides the page without losing the filters', () => {
@@ -167,5 +170,68 @@ describe('query building and paging', () => {
     expect(pageCount(25, 25)).toBe(1);
     expect(pageCount(26, 25)).toBe(2);
     expect(pageCount(51, 25)).toBe(3);
+  });
+});
+
+describe('Date Period — by Production Date only (change 9, 7 Nov 2026)', () => {
+  /** A bound as the local calendar day it starts or ends (the app runs on UTC; the test PC may not). */
+  const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // 8 Nov 2026, 10:00 in the plant (IST).
+  const NOW = new Date('2026-11-08T04:30:00Z');
+  const days = (params: Record<string, string>) => {
+    const f = parseSlabFilters(params, NOW);
+    const where = buildSlabWhere(f) as { receivedDate?: { gte: Date; lte: Date } };
+    return where.receivedDate
+      ? [localDay(where.receivedDate.gte), localDay(where.receivedDate.lte)]
+      : null;
+  };
+
+  it('offers All, Today, Last 7 Days, Last 30 Days, Month-wise and Custom, in that order', () => {
+    expect(DATE_PERIODS.map((p) => DATE_PERIOD_LABELS[p])).toEqual([
+      'All', 'Today', 'Last 7 Days', 'Last 30 Days', 'Month-wise', 'Custom Date Range (From–To)',
+    ]);
+  });
+
+  it('All filters nothing; each period bounds the production date, both ends included', () => {
+    expect(days({})).toBeNull();
+    expect(days({ period: 'ALL' })).toBeNull();
+    expect(days({ period: 'TODAY' })).toEqual(['2026-11-08', '2026-11-08']);
+    expect(days({ period: 'LAST_7' })).toEqual(['2026-11-02', '2026-11-08']);
+    expect(days({ period: 'LAST_30' })).toEqual(['2026-10-10', '2026-11-08']);
+    expect(days({ period: 'MONTH', month: '2026-10' })).toEqual(['2026-10-01', '2026-10-31']);
+    expect(days({ period: 'MONTH', month: '2026-02' })).toEqual(['2026-02-01', '2026-02-28']);
+    expect(days({ period: 'CUSTOM', receivedFrom: '2026-10-05', receivedTo: '2026-10-09' })).toEqual(['2026-10-05', '2026-10-09']);
+  });
+
+  it('reads only the production date column (receivedDate), never another timestamp', () => {
+    const where = buildSlabWhere(parseSlabFilters({ period: 'LAST_7' }, NOW));
+    expect(Object.keys(where).sort()).toEqual(['deletedAt', 'receivedDate']);
+  });
+
+  it('today is the plant’s: at 00:30 IST on 8 Nov it is already the 8th', () => {
+    expect(datePeriodDays('TODAY', '', new Date('2026-11-07T19:00:00Z'))).toEqual({ from: '2026-11-08', to: '2026-11-08' });
+  });
+
+  it('works with every other filter together, each narrowing (AND)', () => {
+    const where = buildSlabWhere(parseSlabFilters({
+      period: 'MONTH', month: '2026-11', receivedOn: '2026-11-05', batchNo: '12', slabNo: '85', grade: 'C', disposition: 'TRIMMING',
+      baseMaterialId: 'm1', designId: 'd1',
+    }, NOW)) as Record<string, unknown> & { receivedDate: { gte: Date; lte: Date } };
+    expect(where).toMatchObject({ currentGrade: 'C', currentDisposition: 'TRIMMING', baseMaterialId: 'm1', plannedDesignId: 'd1' });
+    expect(where).toHaveProperty('slabNo');
+    expect(where).toHaveProperty('batch');
+    // The one day inside the month: the day wins, both must hold.
+    expect([localDay(where.receivedDate.gte), localDay(where.receivedDate.lte)]).toEqual(['2026-11-05', '2026-11-05']);
+  });
+
+  it('a link keeps the period by name (so Today stays today); only Custom carries its dates', () => {
+    const today = buildQuery(parseSlabFilters({ period: 'TODAY' }, NOW));
+    expect(today).toContain('period=TODAY');
+    expect(today).not.toContain('receivedFrom');
+    expect(buildQuery(parseSlabFilters({ period: 'MONTH', month: '2026-10' }, NOW))).toContain('month=2026-10');
+    expect(buildQuery(parseSlabFilters({ period: 'CUSTOM', receivedFrom: '2026-10-05', receivedTo: '2026-10-09' }, NOW))).toContain('receivedFrom=2026-10-05');
+    // An old link with only From–To still means that range.
+    expect(parseSlabFilters({ receivedFrom: '2026-10-05', receivedTo: '2026-10-09' }, NOW).period).toBe('CUSTOM');
+    expect(hasActiveFilters(parseSlabFilters({ period: 'TODAY' }, NOW))).toBe(true);
   });
 });

@@ -41,6 +41,12 @@ describe('grade routing', () => {
     expect(dispositionAllowed(SlabGrade.C, Disposition.RECALIBRATION, 4)).toBe(true);
   });
 
+  it('sends Grade C to trimming as its second outcome (7 Nov 2026), and no other grade', () => {
+    expect(dispositionAllowed(SlabGrade.C, Disposition.TRIMMING, 0)).toBe(true);
+    expect(dispositionAllowed(SlabGrade.A, Disposition.TRIMMING, 0)).toBe(false);
+    expect(dispositionAllowed(SlabGrade.B, Disposition.TRIMMING, 0)).toBe(false);
+  });
+
   it('refuses a sixth recalibration', () => {
     expect(dispositionAllowed(SlabGrade.C, Disposition.RECALIBRATION, 5)).toBe(false);
   });

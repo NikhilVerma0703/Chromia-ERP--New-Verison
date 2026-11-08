@@ -2,10 +2,12 @@ import { ChromiaStockOutcome as StockOutcome } from '@prisma/client';
 import { prisma } from '@/lib/chromia/db';
 import { plantDayRange, toPlantDateInput } from '@/lib/chromia/plant-time';
 import {
+  currentStockSlabs,
   overallProduction,
   processingSlabs,
+  STOCK_VIEW,
   todayProduction,
-  type ProcessingView,
+  type DashboardView,
 } from '@/lib/chromia/production-overview';
 
 /**
@@ -21,7 +23,7 @@ import {
  * TODAY is today's date in IST. The day's Stockyard work is read by the date
  * the in-charge gave it: the Dispatch Date, the Stock Outcome date.
  */
-export async function loadProductionDashboard(view: ProcessingView | null, now: Date = new Date()) {
+export async function loadProductionDashboard(view: DashboardView | null, now: Date = new Date()) {
   const today = toPlantDateInput(now);
   const { from, to } = plantDayRange(today, today);
   // A typed day is stored at midnight UTC — inside the IST day it names.
@@ -73,7 +75,11 @@ export async function loadProductionDashboard(view: ProcessingView | null, now: 
       },
       today,
     ),
-    processing: view ? await loadProcessingRows(processingSlabs(slabs, view, today).map((slab) => slab.id)) : null,
+    processing:
+      view && view !== STOCK_VIEW ? await loadProcessingRows(processingSlabs(slabs, view, today).map((slab) => slab.id)) : null,
+    // Total Current Stock's table (7 Nov 2026): the same rows the KPI counts,
+    // with the same details as the In-Processing table.
+    stock: view === STOCK_VIEW ? await loadProcessingRows(currentStockSlabs(slabs).map((slab) => slab.id)) : null,
   };
 }
 

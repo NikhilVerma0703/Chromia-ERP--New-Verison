@@ -237,6 +237,7 @@ async function saveQc(
   // happens, so it is stale the instant this returns.
   revalidatePath(APP_ROUTES.slabs);
   revalidatePath(APP_ROUTES.dashboard);
+  revalidatePath(APP_ROUTES.trimming);
   revalidatePath(APP_ROUTES.recalibrations);
   revalidatePath(APP_ROUTES.stockyard);
   revalidatePath(APP_ROUTES.dispatch);

@@ -10,28 +10,47 @@ const lastHeader = (page: string) => {
   return all[all.length - 1];
 };
 
-describe('the Action column (28 Oct 2026)', () => {
-  it('is the last column on Slab Records, Stockyard, Approved Slabs and Recalibration', () => {
-    for (const path of [
-      'src/app/chromia/slabs/page.tsx',
-      'src/app/chromia/stockyard/page.tsx',
-      'src/app/chromia/approved/page.tsx',
-      'src/app/chromia/recalibrations/page.tsx',
-    ]) {
-      expect(lastHeader(read(path)), path).toBe('Action');
+const SEVEN_TABLES = [
+  'src/app/chromia/slabs/page.tsx',
+  'src/app/chromia/stockyard/page.tsx',
+  'src/app/chromia/dispatch/page.tsx',
+  'src/app/chromia/approved/page.tsx',
+  'src/app/chromia/trimming/page.tsx',
+  'src/app/chromia/recalibrations/page.tsx',
+  'src/app/chromia/recalibration-tracking/page.tsx',
+];
+
+describe('the Action column (28 Oct 2026; Edit and Delete on all seven tables, change 5)', () => {
+  it('is the last column on every slab table', () => {
+    for (const path of SEVEN_TABLES) {
+      // Dispatched names it Actions (change 12, 8 Nov 2026).
+      expect(lastHeader(read(path)), path).toBe(path.includes('/dispatch/') ? 'Actions' : 'Action');
     }
   });
 
-  it('opens each page’s own edit form', () => {
-    expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/<EditLink href=\{`\$\{APP_ROUTES\.stockyard\}\/\$\{row\.slabId\}\/edit`\}/);
-    expect(read('src/app/chromia/approved/page.tsx')).toMatch(/<EditLink href=\{`\$\{open\}\/edit`\}/);
-    expect(read('src/app/chromia/recalibrations/page.tsx')).toMatch(/<EditLink href=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{row\.slabId\}`\}/);
-    expect(read('src/app/chromia/slabs/page.tsx')).toMatch(/href=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1/);
+  it('holds Edit and Delete on every slab table', () => {
+    for (const path of SEVEN_TABLES) {
+      expect(read(path), path).toMatch(/<SlabActions/);
+    }
   });
 
-  it('Dispatched stays read-only: no Action column, no Edit', () => {
-    const page = read('src/app/chromia/dispatch/page.tsx');
-    expect(page).not.toMatch(/EditLink|>Action<\/th>|>Edit</);
+  it('Edit opens each page’s own edit form, as before', () => {
+    expect(read('src/app/chromia/stockyard/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.stockyard\}\/\$\{row\.slabId\}\/edit`\}/);
+    expect(read('src/app/chromia/approved/page.tsx')).toMatch(/editHref=\{`\$\{open\}\/edit`\}/);
+    expect(read('src/app/chromia/recalibrations/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{row\.slabId\}`\}/);
+    expect(read('src/app/chromia/slabs/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1/);
+    expect(read('src/app/chromia/trimming/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.trimming\}\/\$\{row\.id\}`\}/);
+    // The two with no edit form of their own open an existing one.
+    // Dispatched has its own Edit form since change 12 (8 Nov 2026).
+    expect(read('src/app/chromia/dispatch/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.dispatch\}\/\$\{slab\.slabId\}\/edit`\}/);
+    expect(read('src/app/chromia/recalibration-tracking/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{record\.id\}`\}/);
+  });
+
+  it('Delete asks first, naming the slab, and deletes through the admin-only slab delete', () => {
+    const button = read('src/components/chromia/ui/delete-slab-button.tsx');
+    expect(button).toMatch(/title=\{`Delete slab \$\{slabNo\} permanently\?`\}/);
+    expect(button).toMatch(/deleteSlabRecordAction/);
+    expect(read('src/lib/chromia/server/actions/slab-record.ts')).toMatch(/requireChromiaAdmin\('delete a slab record'\)/);
   });
 });
 
@@ -90,8 +109,9 @@ describe('newest Production Date first, on all five pages', () => {
     expect(read('src/lib/chromia/server/repositories/slab-repository.ts')).toMatch(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/);
     const stock = read('src/lib/chromia/server/repositories/stockyard-repository.ts');
     expect(stock).toMatch(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/);
-    // Both Stockyard lists, the rack and each Stock Outcome's, read slabs now (change 10).
-    expect(stock.match(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/g)?.length).toBe(2);
+    // The Stockyard lists, the rack and each Stock Outcome's, read slabs now (change 10),
+    // and Sent From Stock (change 11).
+    expect(stock.match(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}\]/g)?.length).toBe(3);
     expect(read('src/lib/chromia/server/repositories/recalibration-flow-repository.ts')).toMatch(/orderBy: \[\{ receivedDate: 'desc' \}, \{ createdAt: 'desc' \}, \{ id: 'asc' \}\]/);
     for (const path of ['src/lib/chromia/server/repositories/dispatch-repository.ts', 'src/lib/chromia/server/repositories/approved-repository.ts']) {
       expect(read(path), path).toMatch(/\.sort\(\n\s+\(a, b\) =>\n\s+b\.receivedDate\.getTime\(\) - a\.receivedDate\.getTime\(\) \|\|/);

@@ -79,7 +79,7 @@ const optionalDate = z
  */
 export const intakeQcSchema = z.object({
   grade: z.enum(['A', 'B', 'C'], { message: 'Decide a grade' }),
-  disposition: z.enum(['DISPATCH', 'STOCK', 'SAMPLE_CUTTING', 'WASTE', 'RECALIBRATION'], {
+  disposition: z.enum(['DISPATCH', 'STOCK', 'SAMPLE_CUTTING', 'WASTE', 'RECALIBRATION', 'TRIMMING'], {
     message: 'Choose what happens to the slab',
   }),
   slabRemarks: optionalString,

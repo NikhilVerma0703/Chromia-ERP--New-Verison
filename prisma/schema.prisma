@@ -161,6 +161,9 @@ enum ChromiaDisposition {
   SAMPLE_CUTTING
   RECALIBRATION
   WASTE
+  /// Grade C's second QC Outcome, chosen on Slab Entry (7 Nov 2026, migration
+  /// 0006). The slab stays GRADED and is listed on the Trimming page.
+  TRIMMING
 
   @@map("chromia_disposition")
 }
@@ -633,6 +636,7 @@ model ChromiaSlab {
   stockEntries   ChromiaStockEntry[]
   sampleCuttings ChromiaSampleCutting[]
   wasteRecord    ChromiaWasteRecord?
+  trimming       ChromiaTrimming?
 
   @@index([status])
   @@index([status, currentStage])
@@ -1199,6 +1203,64 @@ model ChromiaWasteRecord {
   @@map("chromia_waste_record")
 }
 
+/// Where a Trimming record came from (7 Nov 2026, migration 0008).
+enum ChromiaTrimmingSource {
+  /// Graded C → Trimming on Slab Entry: a slab of the Chromia line.
+  PRODUCTION
+  /// Entered under "Trimming Without Design Printing": a slab that never went
+  /// on the line. It becomes a Chromia slab only when its QC Report is saved.
+  WITHOUT_PRINTING
+
+  @@map("chromia_trimming_source")
+}
+
+/// One slab's trimming (7 Nov 2026, migration 0008): how much it is trimmed
+/// (From → To), when it went out and came back, and the QC Report after it.
+/// A PRODUCTION row points at its slab, whose own record holds its details. A
+/// WITHOUT_PRINTING row holds its own details (slab no., batch, material,
+/// thickness …) until its QC Report makes it a Chromia slab, then points at it.
+model ChromiaTrimming {
+  id     String                @id @default(uuid())
+  source ChromiaTrimmingSource
+
+  slabId String?      @unique @map("slab_id")
+  slab   ChromiaSlab? @relation(fields: [slabId], references: [id], onDelete: Cascade)
+
+  // A slab without design printing — its own details, until it is graded.
+  /// Unique: a slab number is entered once (PRODUCTION rows leave it null).
+  slabNo         String?   @unique @map("slab_no")
+  batchNo        String?   @map("batch_no")
+  baseMaterial   String?   @map("base_material")
+  fileName       String?   @map("file_name")
+  productionDate DateTime? @map("production_date")
+  /// "HH:MM", as typed.
+  inTime         String?   @map("in_time")
+  thicknessMm    Decimal?  @map("thickness_mm") @db.Decimal(18, 3)
+  remarks        String?
+
+  // A. Trimmed From → To, in millimetres.
+  trimFromMm Decimal? @map("trim_from_mm") @db.Decimal(18, 3)
+  trimToMm   Decimal? @map("trim_to_mm") @db.Decimal(18, 3)
+
+  // B. Send & Receive.
+  sentDate     DateTime? @map("sent_date")
+  receivedDate DateTime? @map("received_date")
+
+  // D. The QC Report after trimming.
+  qcGrade       ChromiaSlabGrade?   @map("qc_grade")
+  qcDisposition ChromiaDisposition? @map("qc_disposition")
+  qcAt          DateTime?           @map("qc_at")
+
+  createdById String?  @map("created_by_id") // -> users.id (no hard FK)
+  updatedById String?  @map("updated_by_id") // -> users.id (no hard FK)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([source])
+  @@index([createdAt])
+  @@map("chromia_trimming")
+}
+
 /// One run of the historical Excel register importer (e.g. "PRO MAY").
 model ChromiaImportBatch {
   id          String              @id @default(uuid())
@@ -1276,9 +1338,10 @@ model AttendanceOperator {
   @@map("attendance_operator")
 }
 
-/// One operator's attendance for one date — ONE row however many lines they
-/// worked. An operator on both lines that day has one In and one Out, not two
-/// of each: they came to work once.
+/// One operator's attendance for one SHIFT of a date — ONE row however many
+/// lines they worked in it. An operator on both lines in a shift has one In
+/// and one Out, not two of each. An operator called back for a second shift
+/// the same day has a second row (shiftNo 2), 7 Nov 2026.
 model AttendanceDay {
   id         String             @id @default(cuid())
   /// yyyy-mm-dd.
@@ -1293,8 +1356,12 @@ model AttendanceDay {
   outTime    String?
   createdAt  DateTime           @default(now())
   updatedAt  DateTime           @updatedAt
+  /// Which shift of the date this row is: 1, then 2 for an operator called
+  /// back the same day (7 Nov 2026, migration 0007). Every row written before
+  /// is shift 1. LAST in the model because ADD COLUMN appends.
+  shiftNo    Int                @default(1)
 
-  @@unique([date, operatorId])
+  @@unique([date, operatorId, shiftNo])
   @@index([date])
   @@map("attendance_day")
 }

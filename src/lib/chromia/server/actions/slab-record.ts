@@ -28,6 +28,11 @@ function revalidateSlabViews() {
   revalidatePath(APP_ROUTES.recalibrationTracking);
   revalidatePath(APP_ROUTES.stockyard);
   revalidatePath(APP_ROUTES.reports);
+  revalidatePath(APP_ROUTES.trimming);
+  // Every table a slab can be deleted from (7 Nov 2026, change 5).
+  revalidatePath(APP_ROUTES.dispatch);
+  revalidatePath(APP_ROUTES.approved);
+  revalidatePath(APP_ROUTES.downloads);
 }
 
 export async function updateSlabRecordAction(

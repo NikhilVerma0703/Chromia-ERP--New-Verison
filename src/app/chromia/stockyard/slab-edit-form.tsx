@@ -8,6 +8,7 @@ import { ComboInput } from '@/components/chromia/ui/combo';
 import { field, FieldGrid, SectionCard, selectField } from '@/components/chromia/ui/form';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { TimeInput } from '@/components/chromia/ui/time-input';
+import { ALTER_DESTINATION_LABELS, ALTER_DESTINATIONS } from '@/lib/chromia/constants/alter-destinations';
 import { STOCK_OUTCOME_LABELS } from '@/lib/chromia/constants/stock-outcomes';
 import { updateStockyardSlabAction, type StockyardEditFormState } from '@/lib/chromia/server/actions/stockyard-edit';
 
@@ -22,8 +23,11 @@ export interface EditDetails {
 }
 
 interface Props {
-  /** 'stockyard' adds the Stock Outcome part; 'approved' is entry and QC only. */
-  form: 'stockyard' | 'approved';
+  /**
+   * 'stockyard' adds the Stock Outcome part; 'approved' is entry and QC only;
+   * 'dispatched' adds Alter From Dispatched (change 12).
+   */
+  form: 'stockyard' | 'approved' | 'dispatched';
   slabId: string;
   details: EditDetails;
   qc: { grade: string; disposition: string; remarks: string };
@@ -34,15 +38,25 @@ interface Props {
   outcomeDate: string;
   /** The plant day it was stocked: the earliest Stock Outcome date. */
   stockedOn: string;
+  /** The plant day it was dispatched, while it is: the earliest Alter From Dispatched date. */
+  dispatchedOn: string;
   today: string;
   baseMaterials: string[];
   fileNames: string[];
   batchNos: string[];
   /** Where to go after a save. */
   returnTo: string;
+  /**
+   * Opened from Sent From Stock (change 11): the outcome is moved between
+   * Dispatched, Approved and Sample Cutting only — no Back in Stock.
+   */
+  sentFromStock?: boolean;
 }
 
 const PLACE_LABEL: Record<string, string> = { IN_STOCK: 'Back in Stock (no outcome)', ...STOCK_OUTCOME_LABELS };
+
+/** Sent From Stock's choices: the three outcomes, named as where the slab goes. */
+const SENT_PLACE_LABEL: Record<string, string> = { DISPATCH: 'Dispatched', APPROVED: 'Approved', SAMPLE_CUTTING: 'Sample Cutting' };
 
 /**
  * Edit one slab from the Stockyard or Approved Slabs (28 Oct 2026): its New
@@ -60,6 +74,7 @@ export function StockyardSlabEditForm(props: Props) {
   const [baseMaterial, setBaseMaterial] = useState(props.details.baseMaterial);
   const [fileName, setFileName] = useState(props.details.fileName);
   const [outcome, setOutcome] = useState(props.outcome);
+  const [destination, setDestination] = useState('');
 
   useEffect(() => {
     if (!state.savedAt || handled.current === state.savedAt) return;
@@ -152,6 +167,46 @@ export function StockyardSlabEditForm(props: Props) {
         </div>
       </SectionCard>
 
+      {/* ───────────────────────────── Alter From Dispatched (Dispatched) */}
+      {props.form === 'dispatched' ? (
+        <SectionCard title="Alter From Dispatched" accent="brand">
+          {props.dispatchedOn ? (
+            <FieldGrid>
+              <Field label="Select" htmlFor="destination" error={errors?.destination?.[0]} hint="Leave as Dispatched to keep the slab where it is">
+                <select id="destination" name="destination" value={destination} onChange={(e) => setDestination(e.target.value)} className={selectField}>
+                  <option value="">Dispatched (no change)</option>
+                  {ALTER_DESTINATIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {ALTER_DESTINATION_LABELS[value]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field
+                label={destination ? 'Date *' : 'Date'}
+                htmlFor="alterDate"
+                error={errors?.alterDate?.[0]}
+                hint={destination ? 'The day the slab moved from Dispatched' : 'Choose a destination first'}
+              >
+                <input
+                  id="alterDate"
+                  name="alterDate"
+                  type="date"
+                  min={props.dispatchedOn}
+                  max={props.today}
+                  defaultValue={props.today}
+                  disabled={!destination}
+                  required={Boolean(destination)}
+                  className={field}
+                />
+              </Field>
+            </FieldGrid>
+          ) : (
+            <p className="text-muted text-sm">This slab is no longer dispatched, so it cannot be moved from Dispatched here.</p>
+          )}
+        </SectionCard>
+      ) : null}
+
       {/* ───────────────────────────────────── Stock Outcome (Stockyard) */}
       {props.form === 'stockyard' ? (
         <SectionCard title="Stock Outcome" accent="brand">
@@ -159,7 +214,7 @@ export function StockyardSlabEditForm(props: Props) {
             <FieldGrid>
               <Field label="Stock Outcome" htmlFor="outcome" error={errors?.outcome?.[0]}>
                 <select id="outcome" name="outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)} className={selectField}>
-                  {Object.entries(PLACE_LABEL).map(([value, label]) => (
+                  {Object.entries(props.sentFromStock && props.outcome !== 'IN_STOCK' ? SENT_PLACE_LABEL : PLACE_LABEL).map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
                     </option>

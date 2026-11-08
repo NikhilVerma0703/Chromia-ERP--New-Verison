@@ -7,6 +7,7 @@ import { isWithinRangeDays, padRange, type DateRange } from '@/lib/chromia/expor
 import { boardRows } from '@/lib/chromia/recalibration-board';
 import { statusLabel } from '@/lib/chromia/recalibration-flow';
 import { manualRemark } from '@/lib/chromia/slab-remarks';
+import { formatTrim, trimmingStatus } from '@/lib/chromia/trimming';
 import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 
 /**
@@ -59,6 +60,10 @@ const SLAB_FIELDS = {
     take: 1,
     select: { releasedAt: true },
   },
+  // The Trimming Slabs report (change 8): its Trimming record.
+  trimming: {
+    select: { trimFromMm: true, trimToMm: true, sentDate: true, receivedDate: true, qcGrade: true, qcDisposition: true },
+  },
 } satisfies Prisma.ChromiaSlabSelect;
 
 type Slab = Prisma.ChromiaSlabGetPayload<{ select: typeof SLAB_FIELDS }>;
@@ -72,6 +77,8 @@ const REPORT_WHERE: Record<ReportKind, Prisma.ChromiaSlabWhereInput> = {
   SAMPLE_CUTTING: { status: SlabStatus.SAMPLE_CUT },
   // The Recalibration page's board: sent to recalibration, or ever on a trip.
   RECALIBRATION: { OR: [{ currentDisposition: Disposition.RECALIBRATION }, { recalibrations: { some: {} } }] },
+  // QC Outcome Trimming now — the Dashboard's Trimming place, the Trimming page's slabs from the line.
+  TRIMMING: { status: SlabStatus.GRADED, currentDisposition: Disposition.TRIMMING },
 };
 
 /** The report's own date for one slab — null when it has none (left out). */
@@ -107,6 +114,25 @@ function recordOf(kind: ReportKind, slab: Slab, eventDate: Date): ReportRecord {
     remarks: kind === 'PRODUCTION' ? slab.remarks : manualRemark(slab.remarks, slab.currentDisposition),
     currentStatus: currentStatusOf(slab, trips).label,
   };
+  if (kind === 'TRIMMING') {
+    // The Trimming page's row: From → To, Sent, Received, and its status.
+    const t = slab.trimming;
+    const state = {
+      trimFromMm: t?.trimFromMm == null ? null : Number(t.trimFromMm),
+      trimToMm: t?.trimToMm == null ? null : Number(t.trimToMm),
+      sentDate: t?.sentDate ?? null,
+      receivedDate: t?.receivedDate ?? null,
+      qcGrade: t?.qcGrade ?? null,
+      qcDisposition: t?.qcDisposition ?? null,
+    };
+    return {
+      ...base,
+      trim: formatTrim(state.trimFromMm, state.trimToMm),
+      sentDate: state.sentDate,
+      receivedDate: state.receivedDate,
+      currentStatus: trimmingStatus(state),
+    };
+  }
   if (kind !== 'RECALIBRATION') return base;
 
   // The Recalibration page's row: the trip it is on (open or latest), and its reason.
@@ -127,7 +153,7 @@ function recordOf(kind: ReportKind, slab: Slab, eventDate: Date): ReportRecord {
 export async function loadDownloadReport(kind: ReportKind, range: DateRange): Promise<BuiltReport> {
   // A typed production date can be narrowed in the query; the other dates
   // live on the outcome's record, so those reports filter after reading.
-  const byProductionDate = kind === 'PRODUCTION' || kind === 'STOCK' || kind === 'RECALIBRATION';
+  const byProductionDate = kind === 'PRODUCTION' || kind === 'STOCK' || kind === 'RECALIBRATION' || kind === 'TRIMMING';
   const slabs = await prisma.chromiaSlab.findMany({
     where: {
       AND: [await physicalSlabWhere(), REPORT_WHERE[kind], byProductionDate ? { receivedDate: padRange(range) } : {}],

@@ -45,6 +45,8 @@ const config: Config = {
           stock: "#327dff",
           approved: "#0891b2",
           processing: "#64748b",
+          // Graded C → Trimming (7 Nov 2026).
+          trimming: "#db2777",
         },
       },
       borderRadius: {

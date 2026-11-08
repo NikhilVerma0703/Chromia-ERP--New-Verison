@@ -90,6 +90,8 @@ export const CHROMIA_ITEMS: NavItem[] = [
   { href: "/chromia/dispatch",               icon: I.packaging, label: "Dispatched" },
   // Directly below Dispatched (27 Oct 2026): slabs approved in the Stockyard.
   { href: "/chromia/approved",               icon: I.approved, label: "Approved Slabs" },
+  // First of RECALIBRATION & TRIMMING (7 Nov 2026): slabs graded C → Trimming.
+  { href: "/chromia/trimming",               icon: I.scissors, label: "Trimming" },
   { href: "/chromia/recalibrations",         icon: I.spanner,  label: "Recalibration" },
   { href: "/chromia/recalibration-tracking", icon: I.live,     label: "Recal. Tracking" },
   { href: "/chromia/reports",                icon: I.ceo,      label: "Reports" },
@@ -107,7 +109,8 @@ const sections = (...blocks: NavBlock[][]): NavModel => ({ kind: "sections", blo
 export function chromiaNav(): NavModel {
   return sections(
     section("Production", CHROMIA_ITEMS.filter((t) => ["/chromia/dashboard", "/chromia/operator", "/chromia/slabs", "/chromia/stockyard", "/chromia/dispatch", "/chromia/approved"].includes(t.href))),
-    section("Recalibration", CHROMIA_ITEMS.filter((t) => t.href.startsWith("/chromia/recalibration"))),
+    // Trimming, Recalibration, Recal. Tracking — in that order (7 Nov 2026).
+    section("Recalibration & Trimming", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/trimming" || t.href.startsWith("/chromia/recalibration"))),
     section("Reports", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/reports" || t.href === "/chromia/downloads")),
     section("Setup", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/import")),
     section("Attendance", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/attendance")),

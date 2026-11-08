@@ -9,6 +9,8 @@ import { isAppError } from '@/lib/chromia/errors';
 import { combineDateAndTime, registerDay } from '@/lib/chromia/operator-register';
 import { slabRecordEditSchema } from '@/lib/chromia/validation/slab-record';
 import { updateSlabRecord } from '@/lib/chromia/server/services/slab-record-service';
+import { ALTER_DESTINATIONS, type AlterDestination } from '@/lib/chromia/constants/alter-destinations';
+import { alterFromDispatched } from '@/lib/chromia/server/services/dispatched-alter-service';
 import {
   correctStockGrade,
   correctStockOutcome,
@@ -37,7 +39,9 @@ const PLACES: readonly StockyardPlace[] = ['IN_STOCK', 'DISPATCH', 'APPROVED', '
  *                  correction Slab Records makes (updateSlabRecord);
  *   QC Report      the grade, A or B, corrected in place (correctStockGrade);
  *   Stock Outcome  Stockyard only: the outcome and its date, or Back in Stock
- *                  (correctStockOutcome).
+ *                  (correctStockOutcome);
+ *   Alter From     Dispatched only (change 12): In Stock or Recalibration and
+ *   Dispatched     the date — saved last, by alterFromDispatched.
  *
  * Everything is checked before anything is written. The same slab record is
  * corrected throughout; none is created, and its photo stays its own.
@@ -121,8 +125,19 @@ export async function updateStockyardSlabAction(
     }
   }
 
+  // ── Alter From Dispatched ─────────────────────────────────────────────
+  const destination = get('form') === 'dispatched' ? (get('destination') as AlterDestination | '') : '';
+  let alterDate: Date | null = null;
+  if (destination) {
+    const day = get('alterDate');
+    alterDate = /^\d{4}-\d{2}-\d{2}$/.test(day) ? registerDay(day) : null;
+    if (!ALTER_DESTINATIONS.includes(destination)) fail('destination', 'Choose In Stock or Recalibration');
+    else if (!alterDate) fail('alterDate', 'Enter the date the slab moved from Dispatched');
+    else if (day > stockyardToday()) fail('alterDate', 'The date cannot be in the future');
+  }
+
   if (Object.keys(errors).length) return { fieldErrors: errors };
-  if (!correction && !gradeChanged && !outcomeChanged) {
+  if (!correction && !gradeChanged && !outcomeChanged && !destination) {
     return { error: 'Nothing was changed — correct a field, then Update Slab.' };
   }
 
@@ -140,6 +155,10 @@ export async function updateStockyardSlabAction(
     if (outcomeChanged) {
       await correctStockOutcome({ slabId, outcome, date }, user.id);
       saved.push('Stock Outcome');
+    }
+    if (destination && alterDate) {
+      await alterFromDispatched({ slabId, destination, date: alterDate }, user.id);
+      saved.push('Alter From Dispatched');
     }
   } catch (error) {
     refresh();
@@ -162,6 +181,10 @@ function refresh() {
     APP_ROUTES.dashboard,
     APP_ROUTES.operator,
     APP_ROUTES.reports,
+    // A slab moved from Dispatched lands here (change 12).
+    APP_ROUTES.recalibrations,
+    APP_ROUTES.recalibrationTracking,
+    APP_ROUTES.downloads,
   ]) {
     revalidatePath(path);
   }

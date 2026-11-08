@@ -5,7 +5,7 @@ import { TrendLine } from '@/components/chromia/charts/trend-line';
 import { EmptyState, PageHeader } from '@/components/chromia/ui';
 import { PLACE_COLORS } from '@/lib/chromia/constants/production-places';
 import { formatPlantDay, toPlantDateInput } from '@/lib/chromia/plant-time';
-import { parseTrendRange, TREND_RANGE_LABELS } from '@/lib/chromia/reports-charts';
+import { OTHERS, parseTrendRange, TOP_DESIGNS, topDesigns, topDesignsWithOthers, TREND_RANGE_LABELS } from '@/lib/chromia/reports-charts';
 import { loadReportCharts } from '@/lib/chromia/server/repositories/report-repository';
 import { requirePageUser } from '@/lib/pageUser';
 
@@ -16,6 +16,9 @@ export const dynamic = 'force-dynamic';
 
 /** The brand teal: one series, one colour — a design has no colour of its own. */
 const SERIES = '#0f4c5c'; // --color-brand-600
+
+/** "Others" is a total, not a design: a quieter tone of the same series (change 6). */
+const OTHERS_COLOR = '#7fb3bf'; // --color-brand-300
 
 /** A chart panel: title and a line saying what it counts, as in the reference. */
 function Panel({ title, note, actions, children }: { title: string; note: string; actions?: React.ReactNode; children: React.ReactNode }) {
@@ -63,11 +66,22 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
       <div className="flex flex-col gap-6">
         {/* ------------------------------------------ 1 · most produced designs --- */}
-        <Panel title="Most Produced Designs" note="Slabs produced per File Name / Planned Design, most first">
+        <Panel
+          title="Most Produced Designs"
+          note={`Top ${TOP_DESIGNS} designs by slabs produced, most first${charts.designs.length > TOP_DESIGNS ? ' — every other design together under Others' : ''}; each share is of all ${charts.total} slabs produced`}
+        >
           {charts.designs.length === 0 ? (
             <EmptyState>No slabs produced yet.</EmptyState>
           ) : (
-            <HorizontalBars rows={charts.designs.map((d) => ({ label: d.design, value: d.total }))} color={SERIES} total={charts.total} />
+            <HorizontalBars
+              rows={topDesignsWithOthers(charts.designs).map((d) =>
+                d.label === OTHERS
+                  ? { label: d.label, value: d.value, color: OTHERS_COLOR, title: `${d.designs} other design${d.designs === 1 ? '' : 's'}` }
+                  : { label: d.label, value: d.value },
+              )}
+              color={SERIES}
+              total={charts.total}
+            />
           )}
         </Panel>
 
@@ -91,13 +105,17 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         </div>
 
         {/* ------------------------- 3 · design-wise stock & outcome analysis --- */}
-        <Panel title="Design-Wise Stock & Outcome Analysis" note="Each design's slabs by where they are now, most produced first">
+        <Panel
+          title="Design-Wise Stock & Outcome Analysis"
+          note={`Top ${TOP_DESIGNS} designs by slabs produced, each split by where its slabs are now — every slab in exactly one place`}
+        >
           {charts.designs.length === 0 ? (
             <EmptyState>No slabs produced yet.</EmptyState>
           ) : (
             <div className="flex flex-col gap-5">
+              {/* Current Stock, Dispatched, Approved, Sample Cutting, Recalibration, Trimming, In-Processing. */}
               <PlaceLegend />
-              <StackedPlaceBars rows={charts.designs.map((d) => ({ label: d.design, total: d.total, places: d.places }))} />
+              <StackedPlaceBars rows={topDesigns(charts.designs).map((d) => ({ label: d.design, total: d.total, places: d.places }))} />
             </div>
           )}
         </Panel>

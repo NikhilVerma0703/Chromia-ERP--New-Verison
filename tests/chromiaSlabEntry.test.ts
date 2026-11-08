@@ -18,10 +18,11 @@ const QC = read("src/app/chromia/slabs/new/qc-section.tsx");
 const MIGRATION = read("prisma/migrations/0002_slab_entry_serial_no/migration.sql");
 const SCHEMA = read("prisma/schema.prisma");
 
-test("Grade A → Stock, Grade B → Stock or Sample Cutting, Grade C → Recalibration", () => {
+test("Grade A → Stock, Grade B → Stock or Sample Cutting, Grade C → Recalibration or Trimming", () => {
   assert.deepEqual(GRADE_ALLOWED_DISPOSITIONS.A, ["STOCK"]);
   assert.deepEqual(GRADE_ALLOWED_DISPOSITIONS.B, ["STOCK", "SAMPLE_CUTTING"]);
-  assert.deepEqual(GRADE_ALLOWED_DISPOSITIONS.C, ["RECALIBRATION"]);
+  // Trimming is Grade C's second outcome on Slab Entry (7 Nov 2026).
+  assert.deepEqual(GRADE_ALLOWED_DISPOSITIONS.C, ["RECALIBRATION", "TRIMMING"]);
 });
 
 test("the server sets the outcome of a one-outcome grade, whatever the page sent", () => {

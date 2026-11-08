@@ -47,6 +47,37 @@ export function designBreakdown(slabs: readonly ReportSlab[]): DesignRow[] {
   return [...rows.values()].sort((a, b) => b.total - a.total || a.design.localeCompare(b.design, undefined, { numeric: true }));
 }
 
+/** How many designs each design chart names (7 Nov 2026, change 6). */
+export const TOP_DESIGNS = 10;
+
+/** The bar that gathers every design past the Top 10. */
+export const OTHERS = 'Others';
+
+/**
+ * The Top 10 designs by slabs produced — designBreakdown's own order, most
+ * produced first (ties by name; never alphabetical overall). For Design-Wise
+ * Stock & Outcome Analysis, which shows these ten and nothing else.
+ */
+export function topDesigns(rows: readonly DesignRow[], n: number = TOP_DESIGNS): DesignRow[] {
+  return rows.slice(0, n);
+}
+
+/**
+ * Most Produced Designs: the Top 10, then one "Others" bar holding every
+ * remaining design's slabs together — so the bars still add up to every slab
+ * produced, and each one's share is of that whole. "Others" appears only when
+ * there are designs past the tenth.
+ */
+export function topDesignsWithOthers(
+  rows: readonly DesignRow[],
+  n: number = TOP_DESIGNS,
+): { label: string; value: number; designs: number }[] {
+  const top = rows.slice(0, n).map((row) => ({ label: row.design, value: row.total, designs: 1 }));
+  const rest = rows.slice(n);
+  if (rest.length === 0) return top;
+  return [...top, { label: OTHERS, value: rest.reduce((sum, row) => sum + row.total, 0), designs: rest.length }];
+}
+
 /** The donut's four places — where the graded, placed slabs are. */
 export const DISTRIBUTION_PLACES = ['STOCK', 'DISPATCHED', 'APPROVED', 'SAMPLE_CUTTING'] as const;
 

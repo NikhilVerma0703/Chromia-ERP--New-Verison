@@ -20,6 +20,7 @@ const DISPOSITION_TONE: Record<Disposition, Tone> = {
   SAMPLE_CUTTING: 'hold', // amber
   RECALIBRATION: 'recalibration', // violet
   WASTE: 'waste', // red
+  TRIMMING: 'trimming', // pink
 };
 
 /**

@@ -119,13 +119,19 @@ describe('Dispatched page (27 Oct 2026)', () => {
       'Thickness (cm)',
       'Grade',
       'Slab Remarks',
+      // Move back to In Stock or Recalibration (change 12, 8 Nov 2026).
+      'Alter From Dispatched',
+      // Edit and Delete (change 5, 7 Nov 2026), named Actions (change 12).
+      'Actions',
     ]);
     // Dispatch Date is the dispatch record's date; Production Date the slab's.
     expect(page).toMatch(/dateFmt\.format\(slab\.dispatchDate\)[\s\S]{0,120}dateFmt\.format\(slab\.receivedDate\)/);
   });
 
-  it('is read-only: no action, no form but the filter, nothing that writes', () => {
-    expect(page).not.toMatch(/Action\b|SendForm|<form/);
+  it('dispatches nothing: Edit and Delete (change 5), Alter From Dispatched (change 12), and its reads write nothing', () => {
+    expect(page).not.toMatch(/SendForm|<form/);
+    expect(page).toMatch(/<SlabActions/);
+    expect(page).toMatch(/<AlterFromDispatchedForm/);
     expect(form).toMatch(/<form method="get"/);
     expect(form).not.toMatch(/useActionState|server\/actions/);
     expect(repo).not.toMatch(/\.(create|update|upsert|delete)(Many)?\(/);

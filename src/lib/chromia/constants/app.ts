@@ -23,6 +23,8 @@ export const APP_ROUTES = {
   dispatch: '/chromia/dispatch',
   /** Approved Slabs — slabs sent from the Stockyard as Approved (27 Oct 2026). */
   approved: '/chromia/approved',
+  /** Trimming — slabs graded C → Trimming on Slab Entry (7 Nov 2026). */
+  trimming: '/chromia/trimming',
   recalibrations: '/chromia/recalibrations',
   recalibrationTracking: '/chromia/recalibration-tracking',
   import: '/chromia/import',

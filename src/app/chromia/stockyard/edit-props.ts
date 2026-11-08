@@ -9,6 +9,7 @@ import {
   loadRecentBatchNos,
 } from '@/lib/chromia/server/services/operator-service';
 import { loadStockyardPlace } from '@/lib/chromia/server/services/stockyard-edit-service';
+import { prisma } from '@/lib/chromia/db';
 
 /**
  * Everything the Stockyard and Approved Slabs Edit forms open with: the slab
@@ -24,6 +25,13 @@ export async function loadSlabEditProps(slabId: string) {
   ]);
   if (!record) return null;
   const { entry, place } = await loadStockyardPlace(slabId);
+  // The latest dispatch, while the slab is dispatched: the earliest date
+  // Alter From Dispatched may carry (change 12). None once it has moved.
+  const dispatch = await prisma.chromiaDispatch.findFirst({
+    where: { slabId, slab: { status: 'DISPATCHED' } },
+    orderBy: [{ dispatchDate: 'desc' }, { createdAt: 'desc' }],
+    select: { dispatchDate: true },
+  });
 
   return {
     record,
@@ -47,6 +55,7 @@ export async function loadSlabEditProps(slabId: string) {
       outcome: place ?? '',
       outcomeDate: place && place !== 'IN_STOCK' && entry?.releasedAt ? toPlantDateInput(entry.releasedAt) : '',
       stockedOn: stockedOnDay(entry?.stockDate) ?? '',
+      dispatchedOn: dispatch ? toPlantDateInput(dispatch.dispatchDate) : '',
       today: stockyardToday(),
       baseMaterials,
       fileNames,

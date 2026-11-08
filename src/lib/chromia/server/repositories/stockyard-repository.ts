@@ -207,3 +207,85 @@ export async function listStockOutcomeRecords(outcome: StockOutcomeValue, filter
     };
   });
 }
+
+// ───────────────────────────────────────── Sent From Stock (8 Nov 2026) ───
+
+/** Each Stock Outcome and the slab status it leaves a slab in, the other way round. */
+const OUTCOME_OF_STATUS: Partial<Record<SlabStatus, StockOutcomeValue>> = {
+  [SlabStatus.DISPATCHED]: 'DISPATCH',
+  [SlabStatus.APPROVED]: 'APPROVED',
+  [SlabStatus.SAMPLE_CUT]: 'SAMPLE_CUTTING',
+};
+
+/**
+ * Sent From Stock (change 11, 8 Nov 2026): every slab that went on the rack
+ * and left it by a Stock Outcome — Dispatch, Approved or Sample Cutting —
+ * newest Production Date first, each physical slab once.
+ *
+ * FROM THE RACK ONLY. A slab is listed when its latest stock entry was
+ * released, and released by the very outcome the slab is in now — the same
+ * test the Stockyard Edit form uses (loadStockyardPlace), so every row can be
+ * edited there. A slab sent straight from QC never had a stock entry and is
+ * not listed; one taken back into stock is In Stock again, not here.
+ *
+ * The date is the outcome's own record: the dispatch, the cut, or (Approved)
+ * the stock entry's release.
+ *
+ * The table's own Slab Number search narrows it: partial and case-insensitive
+ * ("1456" finds 14567 and 14567-A), as Find a Slab's is.
+ */
+export async function listSentFromStock(slabNo = '') {
+  const slabs = await prisma.chromiaSlab.findMany({
+    where: {
+      AND: [
+        await physicalSlabWhere(),
+        { deletedAt: null, status: { in: [SlabStatus.DISPATCHED, SlabStatus.APPROVED, SlabStatus.SAMPLE_CUT] } },
+        { stockEntries: { some: { releaseOutcome: { not: null } } } },
+        slabNo ? { slabNo: { contains: slabNo, mode: 'insensitive' } } : {},
+      ],
+    },
+    orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
+    select: {
+      id: true,
+      slabNo: true,
+      status: true,
+      receivedDate: true,
+      currentThicknessMm: true,
+      currentGrade: true,
+      currentDisposition: true,
+      remarks: true,
+      batch: { select: { batchNo: true } },
+      baseMaterial: { select: { name: true } },
+      plannedDesign: { select: { name: true, fileName: true } },
+      stockEntries: {
+        orderBy: [{ stockDate: 'desc' }, { createdAt: 'desc' }],
+        take: 1,
+        select: { stockDate: true, releasedAt: true, releaseOutcome: true },
+      },
+      dispatches: { orderBy: [{ dispatchDate: 'desc' }, { createdAt: 'desc' }], take: 1, select: { dispatchDate: true } },
+      sampleCuttings: { orderBy: [{ cutDate: 'desc' }, { createdAt: 'desc' }], take: 1, select: { cutDate: true } },
+    },
+  });
+
+  return slabs.flatMap(({ stockEntries, dispatches, sampleCuttings, currentThicknessMm, status, ...slab }) => {
+    const entry = stockEntries[0];
+    const outcome = OUTCOME_OF_STATUS[status];
+    // Released from the rack, by the outcome the slab is in now.
+    if (!entry || !outcome || entry.releasedAt === null || entry.releaseOutcome !== outcome) return [];
+    const sentOn =
+      outcome === 'DISPATCH'
+        ? (dispatches[0]?.dispatchDate ?? entry.releasedAt)
+        : outcome === 'SAMPLE_CUTTING'
+          ? (sampleCuttings[0]?.cutDate ?? entry.releasedAt)
+          : entry.releasedAt;
+    return [
+      {
+        ...slab,
+        thicknessCm: currentThicknessMm === null ? null : Number(currentThicknessMm) / 10,
+        stockDate: entry.stockDate,
+        outcome,
+        sentOn,
+      },
+    ];
+  });
+}

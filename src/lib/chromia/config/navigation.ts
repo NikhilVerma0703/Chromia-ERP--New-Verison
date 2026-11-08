@@ -31,6 +31,8 @@ export const navigation: readonly NavItem[] = [
   { title: 'Stockyard', href: '/chromia/stockyard', icon: 'stockyard' },
   { title: 'Dispatched', href: '/chromia/dispatch', icon: 'dispatch' },
   { title: 'Approved Slabs', href: '/chromia/approved', icon: 'approved' },
+  // Grade C → Trimming, first of Recalibration & Trimming (7 Nov 2026).
+  { title: 'Trimming', href: '/chromia/trimming', icon: 'trimming' },
   { title: 'Recalibration', href: '/chromia/recalibrations', icon: 'recalibration' },
   { title: 'Recal. Tracking', href: '/chromia/recalibration-tracking', icon: 'tracking' },
   { title: 'Reports', href: '/chromia/reports', icon: 'reports' },

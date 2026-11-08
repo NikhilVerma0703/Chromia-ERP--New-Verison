@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { EmptyState, PageHeader, Stat } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { GradeBadge } from '@/components/chromia/ui/status';
+import { SlabActions } from '@/components/chromia/ui/delete-slab-button';
 import { attemptOf, buildTrackingKpis } from '@/lib/chromia/recalibration-kpis';
 import { daysOut, formatDaysOut, stageOf, statusLabel } from '@/lib/chromia/recalibration-flow';
 import {
@@ -207,6 +208,7 @@ export default async function RecalibrationTrackingPage({
                     <th className={th}>Received Date</th>
                     <th className={th}>Status</th>
                     <th className={th}>Days out</th>
+                    <th className={`${th} text-right`}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -249,6 +251,10 @@ export default async function RecalibrationTrackingPage({
                           }`}
                         >
                           {formatDaysOut(ageing)}
+                        </td>
+                        <td className={`${td} text-right`}>
+                          {/* Edit opens the slab's Recalibration form (change 5). */}
+                          <SlabActions editHref={`${APP_ROUTES.recalibrations}/${record.id}`} slabId={record.id} slabNo={record.slabNo} />
                         </td>
                       </tr>
                     );

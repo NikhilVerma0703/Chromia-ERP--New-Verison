@@ -86,7 +86,8 @@ export function HorizontalBars({
   noun = slabs,
   compact = false,
 }: {
-  rows: { label: string; value: number }[];
+  /** `color` paints one bar apart — the "Others" bar of Most Produced Designs; `title` adds a line to its tooltip. */
+  rows: { label: string; value: number; color?: string; title?: string }[];
   color: string;
   /** What the shares are of. */
   total: number;
@@ -113,10 +114,11 @@ export function HorizontalBars({
                 tabIndex={0}
                 aria-label={`${row.label}: ${noun(row.value)}, ${pct(row.value, total)}%`}
                 className="group/mark relative z-10 h-5 rounded-r-[4px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-600)]"
-                style={{ width: `${(row.value / scale.max) * 100}%`, minWidth: row.value > 0 ? 3 : 0, background: color, flexShrink: 0 }}
+                style={{ width: `${(row.value / scale.max) * 100}%`, minWidth: row.value > 0 ? 3 : 0, background: row.color ?? color, flexShrink: 0 }}
               >
                 <Tip>
                   <span className="font-semibold">{row.label}</span>
+                  {row.title ? <span className="text-muted"> · {row.title}</span> : null}
                   <br />
                   {noun(row.value)} · {pct(row.value, total)}%
                 </Tip>

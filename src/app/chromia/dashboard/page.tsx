@@ -7,7 +7,7 @@ import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { GradeBadge, StatusBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { PLANT_TIME_ZONE, formatPlantDay } from '@/lib/chromia/plant-time';
-import { parseProcessingView, type ProcessingView } from '@/lib/chromia/production-overview';
+import { parseDashboardView, type DashboardView, type ProcessingView } from '@/lib/chromia/production-overview';
 import { ordinal } from '@/lib/chromia/recalibration-flow';
 import type { RawSearchParams } from '@/lib/chromia/simple-filters';
 import { loadProductionDashboard, type ProcessingRow } from '@/lib/chromia/server/repositories/dashboard-repository';
@@ -48,13 +48,14 @@ const PROCESSING_TITLE: Record<ProcessingView, string> = {
  * Every figure is a count of unique slabs (14567 and 14567-A are one), read
  * live; production-overview.ts says how each is counted. The two In-Processing
  * KPIs are links, as on the Recalibration page: each opens the table of the
- * slabs it counts, and a second click closes it.
+ * slabs it counts, and a second click closes it. Total Current Stock Slabs
+ * does the same (7 Nov 2026), with the same table of the slabs on the rack.
  */
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   await requirePageUser();
   const params = await searchParams;
-  const view = parseProcessingView(params.view);
-  const { today, overall, todays, processing } = await loadProductionDashboard(view);
+  const view = parseDashboardView(params.view);
+  const { today, overall, todays, processing, stock } = await loadProductionDashboard(view);
 
   return (
     <>
@@ -66,12 +67,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <Stat label="Total Produced Slabs" value={overall.produced} tone="active" />
           <KpiLink view="processing" current={view} label="Total In Processing Slabs" value={overall.inProcessing} />
-          <Stat label="Total Current Stock Slabs" value={overall.currentStock} tone="stock" />
+          <KpiLink view="stock" current={view} label="Total Current Stock Slabs" value={overall.currentStock} dot="bg-status-stock" />
           <Stat label="Total Dispatched Slabs" value={overall.dispatched} tone="done" />
           <Stat label="Total Approved Slabs" value={overall.approved} tone="approved" />
           <Stat label="Total Sample Cutting Slabs" value={overall.sampleCutting} tone="hold" />
         </div>
         {view === 'processing' ? <ProcessingTable view={view} rows={processing ?? []} /> : null}
+        {view === 'stock' ? <StockTable rows={stock ?? []} /> : null}
       </section>
 
       {/* ------------------------- 2 · the palette: where they are, untitled --- */}
@@ -96,17 +98,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   );
 }
 
-/** An In-Processing KPI: a card that opens (and closes) its own table. */
+/** A clickable KPI (In-Processing, Current Stock): a card that opens (and closes) its own table. */
 function KpiLink({
   view,
   current,
   label,
   value,
+  dot = 'bg-status-processing',
 }: {
-  view: ProcessingView;
-  current: ProcessingView | null;
+  view: DashboardView;
+  current: DashboardView | null;
   label: string;
   value: number;
+  /** The KPI's place colour — In-Processing slate unless given. */
+  dot?: string;
 }) {
   const active = current === view;
   return (
@@ -121,7 +126,7 @@ function KpiLink({
       }`}
     >
       <div className="flex items-start gap-2">
-        <span className={`mt-[6px] inline-block size-1.5 shrink-0 rounded-full bg-status-processing`} />
+        <span className={`mt-[6px] inline-block size-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="text-muted text-[11px] leading-[1.35] font-semibold tracking-[0.1em] uppercase">{label}</span>
       </div>
       <p className="mt-3 text-[30px] leading-none font-semibold tracking-tight tabular-nums">{value}</p>
@@ -193,6 +198,80 @@ function ProcessingTable({ view, rows }: { view: ProcessingView; rows: Processin
                       <StatusBadge status={row.status} disposition={row.currentDisposition} />
                     </td>
                     <td className={`${td} text-status-processing font-medium whitespace-nowrap`}>{qcStatus(row)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+/**
+ * Total Current Stock Slabs' table (7 Nov 2026) — the In-Processing table's
+ * layout and details, for the slabs on the rack. Its rows are exactly the
+ * slabs the KPI counts (currentStockSlabs); the slab number opens that slab's
+ * Stockyard Edit.
+ */
+function StockTable({ rows }: { rows: ProcessingRow[] }) {
+  return (
+    <div className="mt-5">
+      <SectionCard
+        title="Total Current Stock Slabs"
+        accent="active"
+        padded={rows.length === 0}
+        actions={
+          <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
+            Slabs: <span className="text-foreground font-semibold tabular-nums">{rows.length}</span>
+          </span>
+        }
+      >
+        {rows.length === 0 ? (
+          <EmptyState>No slab is in stock.</EmptyState>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className={dataTable.root}>
+              <thead className={dataTable.head}>
+                <tr>
+                  <th className={`${th} text-right`}>S.No</th>
+                  <th className={th}>Production Date</th>
+                  <th className={th}>Batch No.</th>
+                  <th className={th}>Slab No.</th>
+                  <th className={th}>Base Material</th>
+                  <th className={th}>File Name</th>
+                  <th className={`${th} text-right`}>Thickness (cm)</th>
+                  <th className={th}>In-time</th>
+                  <th className={th}>Grade</th>
+                  <th className={th}>Processing Status</th>
+                  <th className={th}>QC Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={row.id} className={dataTable.row}>
+                    <td className={`${tdNum} text-muted text-right`}>{index + 1}</td>
+                    <td className={`${td} whitespace-nowrap`}>{dateFmt.format(row.receivedDate)}</td>
+                    <td className={`${tdMuted} font-mono`}>{row.batch.batchNo}</td>
+                    <td className={td}>
+                      <Link
+                        href={`${APP_ROUTES.stockyard}/${row.id}/edit`}
+                        title="Open this slab on Stockyard"
+                        className="text-status-stock font-mono font-semibold underline decoration-dotted underline-offset-4"
+                      >
+                        {row.slabNo}
+                      </Link>
+                    </td>
+                    <td className={td}>{row.baseMaterial.name}</td>
+                    <td className={tdMuted}>{row.designFileName ?? '—'}</td>
+                    <td className={`${tdNum} text-right`}>{row.thicknessCm === null ? '—' : row.thicknessCm}</td>
+                    <td className={`${tdNum} whitespace-nowrap`}>{row.inTime ? timeFmt.format(row.inTime) : '—'}</td>
+                    <td className={td}>{row.currentGrade ? <GradeBadge grade={row.currentGrade} /> : <span className="text-muted">—</span>}</td>
+                    <td className={td}>
+                      <StatusBadge status={row.status} disposition={row.currentDisposition} />
+                    </td>
+                    <td className={`${td} text-status-stock font-medium whitespace-nowrap`}>QC done — in Stock</td>
                   </tr>
                 ))}
               </tbody>

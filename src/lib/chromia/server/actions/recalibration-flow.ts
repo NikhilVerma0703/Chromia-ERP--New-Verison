@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { DISPOSITION_LABELS, GRADE_ALLOWED_DISPOSITIONS } from '@/lib/chromia/constants/process-stages';
+import { allowedDispositions, DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
 import { prisma } from '@/lib/chromia/db';
 import { combineDateAndTime } from '@/lib/chromia/operator-register';
 import { stageOf } from '@/lib/chromia/recalibration-flow';
@@ -291,7 +291,9 @@ export async function updateRecalibrationSlabAction(
     fail('grade', 'The QC Report is graded on the slab’s new pass — save its Received Date and its details first.');
   }
   if (regrade) {
-    const allowed = GRADE_ALLOWED_DISPOSITIONS[grade as keyof typeof GRADE_ALLOWED_DISPOSITIONS] ?? [];
+    // The re-grade after recalibration: Grade C goes to Recalibration only
+    // (Trimming is Slab Entry's, 7 Nov 2026).
+    const allowed = allowedDispositions(grade, { trimming: false });
     const disposition = allowed.length === 1 ? allowed[0] : get('disposition');
     const parsed = intakeQcSchema.safeParse({
       grade,

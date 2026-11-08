@@ -17,7 +17,7 @@
 import type { ChromiaDisposition as DispositionType, ChromiaProcessStage as ProcessStageType, ChromiaSlabGrade as SlabGradeType, ChromiaSlabStatus as SlabStatusType } from '@prisma/client';
 
 export const Disposition = {
-  DISPATCH: 'DISPATCH', STOCK: 'STOCK', SAMPLE_CUTTING: 'SAMPLE_CUTTING', RECALIBRATION: 'RECALIBRATION', WASTE: 'WASTE',
+  DISPATCH: 'DISPATCH', STOCK: 'STOCK', SAMPLE_CUTTING: 'SAMPLE_CUTTING', RECALIBRATION: 'RECALIBRATION', WASTE: 'WASTE', TRIMMING: 'TRIMMING',
 } as const satisfies Record<DispositionType, DispositionType>;
 export const ProcessStage = {
   INCOMING: 'INCOMING', INCOMING_DETAILS: 'INCOMING_DETAILS', BASE_PRIMER: 'BASE_PRIMER', PRINTING: 'PRINTING',
@@ -117,6 +117,7 @@ export const DISPOSITION_LABELS: Record<DispositionType, string> = {
   SAMPLE_CUTTING: 'Sample Cutting',
   RECALIBRATION: 'Recalibration',
   WASTE: 'Waste',
+  TRIMMING: 'Trimming',
 };
 
 export const SLAB_STATUS_LABELS: Record<SlabStatusType, string> = {
@@ -145,9 +146,14 @@ export const SLAB_STATUS_LABELS: Record<SlabStatusType, string> = {
  * refuses against, so the rule holds on every screen that grades — Slab
  * Entry, its QC correction, and the re-grade after recalibration.
  *
- * A grade with a single outcome (A, C) needs no choice: the QC Report sets
- * the outcome itself. Slabs already graded A → Dispatch before the change,
- * and registers imported with a Dispatch remark, keep what they were given.
+ * A grade with a single outcome (A) needs no choice: the QC Report sets the
+ * outcome itself. Slabs already graded A → Dispatch before the change, and
+ * registers imported with a Dispatch remark, keep what they were given.
+ *
+ * GRADE C → RECALIBRATION OR TRIMMING (7 Nov 2026). Trimming is chosen on
+ * Slab Entry only, for a slab that has never been out for recalibration; the
+ * re-grade on the Recalibration page keeps Grade C → Recalibration alone. See
+ * allowedDispositions, which every screen and save asks.
  */
 export const GRADE_ALLOWED_DISPOSITIONS: Record<SlabGradeType, readonly DispositionType[]> = {
   A: [Disposition.STOCK],
@@ -155,8 +161,21 @@ export const GRADE_ALLOWED_DISPOSITIONS: Record<SlabGradeType, readonly Disposit
   // Waste is not an outcome this line records: a failed slab goes back out for
   // recalibration, and only the fifth failure ends its life — that write-off is
   // handled in the Recalibration section, not offered at QC.
-  C: [Disposition.RECALIBRATION],
+  C: [Disposition.RECALIBRATION, Disposition.TRIMMING],
 };
+
+/**
+ * The QC Outcomes a grade may go to on one screen. `trimming: false` is the
+ * Recalibration page's re-grade, and any slab that has already made a
+ * recalibration trip: there Grade C goes to Recalibration only.
+ */
+export function allowedDispositions(
+  grade: string,
+  options: { trimming: boolean },
+): readonly DispositionType[] {
+  const allowed = GRADE_ALLOWED_DISPOSITIONS[grade as SlabGradeType] ?? [];
+  return options.trimming ? allowed : allowed.filter((value) => value !== Disposition.TRIMMING);
+}
 
 /**
  * Hard business limit: a slab may be recalibrated at most five times.

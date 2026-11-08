@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Badge, EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { SlabNo } from '@/components/chromia/ui/slab-no';
-import { EditLink } from '@/components/chromia/ui/edit-link';
+import { SlabActions } from '@/components/chromia/ui/delete-slab-button';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { currentStatusOf } from '@/lib/chromia/current-status';
@@ -185,9 +185,10 @@ export default async function SlabsPage({
                         {slab.remarks ?? '—'}
                       </td>
                       <td className={`${td} text-right`}>
-                        {/* Edit only (28 Oct 2026): the Delete button is gone. */}
-                        <EditLink
-                          href={`${APP_ROUTES.operator}?slab=${slab.id}&edit=1&back=${encodeURIComponent(backTo)}`}
+                        {/* Edit and Delete (change 5, 7 Nov 2026). */}
+                        <SlabActions
+                          editHref={`${APP_ROUTES.operator}?slab=${slab.id}&edit=1&back=${encodeURIComponent(backTo)}`}
+                          slabId={slab.id}
                           slabNo={slab.slabNo}
                         />
                       </td>

@@ -35,7 +35,7 @@ import {
 } from "@/components/commercial/invoices/ui";
 import {
   INCOMPLETE_PREVIOUS_DAY, LEAVE_TYPES, LEAVE_TYPE_HUES, LEAVE_TYPE_LABELS, LINES, LINE_LABELS,
-  dayKind, laterThanNowError, leaveTypeHue, linesLabel, outDate, overnightShiftOpen, parseLines, workedLabel,
+  SUM_OF_HOURS_LABEL, dayKind, laterThanNowError, leaveTypeHue, linesLabel, outDate, overnightShiftOpen, parseLines, shiftLengthError, workedLabel,
   type LineCode,
 } from "@/lib/attendance/attendance";
 import { IN_TIME_GRACE_MINUTES, earliestInTime, inTimeErrorOn, inTimeUnchanged } from "@/lib/attendance/clock";
@@ -108,9 +108,21 @@ interface DayRow {
    *  until it is — and `blockedDate` is the day to go and finish. */
   blocked: boolean;
   blockedDate: string;
-  /** That unfinished row — the night shift's open row gets "Mark out now". */
+  /** That unfinished row. */
   blockedRow: { lines: string; inTime: string; outTime: string } | null;
+  /** Which shift of the date this line is — 1 for the first (7 Nov 2026). */
+  shiftNo: number;
+  /** Last night's shift, still awaiting its Out-Time: not unfinished, and
+   *  closed from this register (7 Nov 2026). Null when there is none. */
+  overnight: { date: string; shiftNo: number; lines: string; inTime: string } | null;
+  /** The operator's last shift of the date is finished: another may start. */
+  canAddShift: boolean;
 }
+
+/** One line of the register: an operator's shift on the date. */
+const rowKey = (r: { operatorId: string; shiftNo: number }) => `${r.operatorId}:${r.shiftNo}`;
+/** The key the night shift's Out-Time is entered under, beside the line's own. */
+const nightKey = (r: { operatorId: string }) => `${r.operatorId}:night`;
 interface Operator { id: string; name: string; isActive: boolean }
 interface LeaveRow {
   id: string; date: string; serial: number; operatorId: string; operatorName: string;
@@ -190,9 +202,11 @@ export function AttendanceClient({ api, rights }: {
   /* Only the latest read of the day lands: pick 19/10 then 20/10 quickly and
      a slow answer for 19/10 must not fill the register under 20/10. */
   const dayRead = useRef(0);
-  const loadDay = useCallback(async (d: string) => {
+  /** `quiet`: read again after a save without blanking the register — a new
+   *  shift, or a night shift marked out, changes the lines around the row. */
+  const loadDay = useCallback(async (d: string, quiet = false) => {
     const mine = ++dayRead.current;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setDayError("");
     try {
       const data = await call(`day?date=${encodeURIComponent(d)}`);
@@ -270,7 +284,7 @@ export function AttendanceClient({ api, rights }: {
   }, [rights.anyDate]);
 
   const startEdit = (r: DayRow) => {
-    setEditing(r.operatorId);
+    setEditing(rowKey(r));
     /* A row with no In-Time yet opens ON THE CLOCK, which is the time the
        operator is marking: the ten minutes are there for the walk to the
        tablet, not as a field to fill in from memory. One already entered is
@@ -284,23 +298,73 @@ export function AttendanceClient({ api, rights }: {
   const toggleLine = (code: LineCode) =>
     setDraft((d) => ({ ...d, lines: d.lines.includes(code) ? d.lines.filter((l) => l !== code) : [...d.lines, code] }));
 
-  const saveRow = async (operatorId: string) => {
+  /* Saves the line open in the editor — `key` is rowKey (a shift of this
+     date) or nightKey (last night's shift, whose Out-Time is entered here and
+     stored on the row of the date it started, 7 Nov 2026). The register is
+     read again quietly afterwards, because a save can open or close the way
+     to another shift. */
+  const saveRow = async (key: string) => {
+    const r = rows.find((row) => rowKey(row) === key || nightKey(row) === key);
+    if (!r) return;
+    const night = key === nightKey(r) && r.overnight;
     setSaving(true);
     setRowError(null);
     try {
       const saved = await call("day", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, operatorId, ...draft }),
+        body: JSON.stringify(night
+          ? { date: night.date, operatorId: r.operatorId, shiftNo: night.shiftNo, lines: parseLines(night.lines), inTime: night.inTime, outTime: draft.outTime }
+          : { date, operatorId: r.operatorId, shiftNo: r.shiftNo, ...draft }),
       });
-      setRows((rs) => rs.map((r) => (r.operatorId === operatorId ? { ...r, ...(saved as Partial<DayRow>) } : r)));
+      if (night) {
+        done(`${r.operatorName} marked out for ${dmy(night.date)}.`);
+      } else {
+        setRows((rs) => rs.map((row) => (rowKey(row) === key ? { ...row, ...(saved as Partial<DayRow>) } : row)));
+      }
       setEditing(null);
+      void loadDay(date, true);
     } catch (e) {
       if ((e as Error).message === ONLY_TODAY && followToday()) return;
-      setRowError({ operatorId, message: (e as Error).message });
+      setRowError({ operatorId: key, message: (e as Error).message });
     } finally {
       setSaving(false);
     }
+  };
+
+  /* ANOTHER SHIFT THE SAME DAY (7 Nov 2026). Offered on an operator's last
+     shift of the date once it is finished (canAddShift, decided by the
+     server): a new, empty line for the next shift opens under it, in the
+     editor. Cancelled before it is saved, it goes again. */
+  const addShift = (r: DayRow) => {
+    const next: DayRow = {
+      ...r, shiftNo: r.shiftNo + 1, lines: r.lines, linesLabel: r.linesLabel, inTime: "", outTime: "",
+      outDate: "", worked: "-", saved: false, canAddShift: false, blocked: false, blockedDate: "", blockedRow: null, overnight: null,
+    };
+    setRows((rs) => {
+      const at = rs.findIndex((row) => rowKey(row) === rowKey(r));
+      return [...rs.slice(0, at + 1), next, ...rs.slice(at + 1)];
+    });
+    startEdit(next);
+  };
+
+  /* Cancel: a new shift line that was never saved is taken away again. */
+  const cancelEdit = () => {
+    setRows((rs) => rs.filter((row) => !(rowKey(row) === editing && !row.saved && row.shiftNo > 1)));
+    setEditing(null);
+    setRowError(null);
+  };
+
+  /* LAST NIGHT'S OUT-TIME, typed by the Plant In-Charge from this date's
+     register (7 Nov 2026). The night shift's row is dated the day it started;
+     its Out is entered here, on the morning it ended, and stored on that row.
+     The tablet has its one-tap "Mark out now" instead (markOutLastNight). */
+  const startNightOut = (r: DayRow) => {
+    if (!r.overnight) return;
+    setEditing(nightKey(r));
+    setNow(nowPlant());
+    setDraft({ lines: parseLines(r.overnight.lines), inTime: r.overnight.inTime, outTime: "" });
+    setRowError(null);
   };
 
   /* MARKING OUT, IN ONE TAP — the tablet's whole evening.
@@ -318,12 +382,13 @@ export function AttendanceClient({ api, rights }: {
       const saved = await call("day", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, operatorId: r.operatorId, lines: parseLines(r.lines), inTime: r.inTime, outTime: nowPlant() }),
+        body: JSON.stringify({ date, operatorId: r.operatorId, shiftNo: r.shiftNo, lines: parseLines(r.lines), inTime: r.inTime, outTime: nowPlant() }),
       });
-      setRows((rs) => rs.map((row) => (row.operatorId === r.operatorId ? { ...row, ...(saved as Partial<DayRow>) } : row)));
+      setRows((rs) => rs.map((row) => (rowKey(row) === rowKey(r) ? { ...row, ...(saved as Partial<DayRow>) } : row)));
+      void loadDay(date, true);
     } catch (e) {
       if ((e as Error).message === ONLY_TODAY && followToday()) return;
-      setRowError({ operatorId: r.operatorId, message: (e as Error).message });
+      setRowError({ operatorId: rowKey(r), message: (e as Error).message });
     } finally {
       setSaving(false);
     }
@@ -335,7 +400,8 @@ export function AttendanceClient({ api, rights }: {
      tablet may do to the day before is stamp that Out-Time (the server checks
      it is only that, and stamps its own clock), and doing it lifts the hold. */
   const markOutLastNight = async (r: DayRow) => {
-    if (!r.blockedRow || rights.anyDate) return; // the tablet's (lastNightOpen)
+    const night = r.overnight;
+    if (!night || rights.anyDate) return; // the tablet's (lastNightOpen)
     setSaving(true);
     setRowError(null);
     try {
@@ -343,16 +409,16 @@ export function AttendanceClient({ api, rights }: {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          date: r.blockedDate, operatorId: r.operatorId,
-          lines: parseLines(r.blockedRow.lines), inTime: r.blockedRow.inTime, outTime: nowPlant(),
+          date: night.date, operatorId: r.operatorId, shiftNo: night.shiftNo,
+          lines: parseLines(night.lines), inTime: night.inTime, outTime: nowPlant(),
         }),
       });
-      setRows((rs) => rs.map((row) => (row.operatorId === r.operatorId
-        ? { ...row, blocked: false, blockedDate: "", blockedRow: null } : row)));
-      done(`${r.operatorName} marked out for ${dmy(r.blockedDate)}.`);
+      setRows((rs) => rs.map((row) => (row.operatorId === r.operatorId ? { ...row, overnight: null } : row)));
+      done(`${r.operatorName} marked out for ${dmy(night.date)}.`);
+      void loadDay(date, true);
     } catch (e) {
       if ((e as Error).message === ONLY_TODAY && followToday()) return;
-      setRowError({ operatorId: r.operatorId, message: (e as Error).message });
+      setRowError({ operatorId: rowKey(r), message: (e as Error).message });
     } finally {
       setSaving(false);
     }
@@ -369,8 +435,11 @@ export function AttendanceClient({ api, rights }: {
          morning's row in the evening to tick the other line sends its 06:00
          back; judging that would make the row uncorrectable for the rest of
          the day, and the rule is about entering a time, not carrying one. */
-  const originalIn = editing ? (rows.find((r) => r.operatorId === editing)?.inTime ?? "") : "";
-  const originalOut = editing ? (rows.find((r) => r.operatorId === editing)?.outTime ?? "") : "";
+  const editingRow = editing ? rows.find((r) => rowKey(r) === editing) : undefined;
+  /** Last night's shift, when its Out-Time is what is open (nightKey). */
+  const editingNight = editing ? (rows.find((r) => nightKey(r) === editing)?.overnight ?? null) : null;
+  const originalIn = editingNight ? editingNight.inTime : (editingRow?.inTime ?? "");
+  const originalOut = editingNight ? "" : (editingRow?.outTime ?? "");
   /* The clock rules are for marking attendance AS IT HAPPENS — the tablet, on
      today's page. An earlier date is being put right after the fact, which
      the register now requires (a new entry is held until the previous day is
@@ -389,10 +458,18 @@ export function AttendanceClient({ api, rights }: {
      judged whenever either time changes, because moving the In past an Out
      already there makes that Out tomorrow's. */
   const outError = useMemo(
-    () => (isToday && !clockRules && draft.outTime.trim()
-      && (draft.outTime.trim() !== originalOut.trim() || !inTimeUnchanged(draft.inTime, originalIn))
-      ? laterThanNowError(draft.outTime, now, draft.inTime) : null),
-    [draft.outTime, draft.inTime, originalOut, originalIn, now, isToday, clockRules],
+    () => {
+      /* Last night's Out, typed here: it is a time on THIS date (the morning
+         the shift ended), so on today it may not be later than now. */
+      if (editingNight) {
+        if (!draft.outTime.trim()) return null;
+        return shiftLengthError(draft.inTime, draft.outTime) ?? (isToday ? laterThanNowError(draft.outTime, now) : null);
+      }
+      return isToday && !clockRules && draft.outTime.trim()
+        && (draft.outTime.trim() !== originalOut.trim() || !inTimeUnchanged(draft.inTime, originalIn))
+        ? laterThanNowError(draft.outTime, now, draft.inTime) : null;
+    },
+    [draft.outTime, draft.inTime, originalOut, originalIn, now, isToday, clockRules, editingNight],
   );
 
   return (
@@ -406,8 +483,9 @@ export function AttendanceClient({ api, rights }: {
         now={now} inError={inError} outError={outError} isToday={isToday} clockRules={clockRules}
         markOut={() => { const t = nowPlant(); setNow(t); setDraft((d) => ({ ...d, outTime: t })); }}
         clearOut={() => setDraft((d) => ({ ...d, outTime: "" }))}
-        startEdit={startEdit} cancel={() => { setEditing(null); setRowError(null); }} toggleLine={toggleLine}
+        startEdit={startEdit} cancel={cancelEdit} toggleLine={toggleLine}
         setDraft={setDraft} saveRow={saveRow} markOutRow={markOutRow} markOutLastNight={markOutLastNight} rights={rights}
+        addShift={addShift} startNightOut={startNightOut}
         operators={operators} operatorsFailed={operatorsFailed}
         onOperatorsChanged={async (msg, note) => {
           if (note) setNotice(msg);
@@ -458,6 +536,10 @@ function DailyAttendance(props: {
   markOutRow: (r: DayRow) => void;
   /** Stamp the Out-Time onto the night shift's open row from the day before. */
   markOutLastNight: (r: DayRow) => void;
+  /** Open a new line for the operator's next shift of this date. */
+  addShift: (r: DayRow) => void;
+  /** The Plant In-Charge types last night's Out-Time from this register. */
+  startNightOut: (r: DayRow) => void;
   /** What this login may do here — see the head of this file. */
   rights: PlantRights;
   operators: Operator[]; operatorsFailed: boolean;
@@ -472,8 +554,10 @@ function DailyAttendance(props: {
    *  to today (closesLastNight); the Plant In-Charge and admins would send it
    *  as an ordinary past-day save, storing this browser's clock as a typed
    *  Out. They open that day with the date field and type it there. */
-  const lastNightOpen = (r: DayRow) => !rights.anyDate && isToday && Boolean(r.blockedRow?.inTime) && !r.blockedRow?.outTime
-    && overnightShiftOpen(r.blockedRow?.inTime, now);
+  const lastNightOpen = (r: DayRow) => !rights.anyDate && isToday && Boolean(r.overnight?.inTime)
+    && overnightShiftOpen(r.overnight?.inTime, now);
+  /** Does this operator have more than one shift on the register's date? */
+  const manyShifts = (operatorId: string) => rows.some((o) => o.operatorId === operatorId && o.shiftNo > 1);
   /** The date the drafted Out-Time belongs to, when it is not this one. */
   const draftOutDate = (() => {
     const d = outDate(date, draft.inTime, draft.outTime);
@@ -493,7 +577,7 @@ function DailyAttendance(props: {
         <SectionHead
           title="Daily Attendance"
           subtitle={
-            `One line per operator for the day. An operator on both lines has one In and one Out — they came to work once. ` +
+            `One line per operator per shift. An operator on both lines in a shift has one In and one Out; one called back later the same day gets another shift. ` +
             (clockRules
               ? `Mark in as you arrive: an In-Time may be up to ${IN_TIME_GRACE_MINUTES} minutes old, and the Out-Time is stamped with the clock.`
               : isToday
@@ -557,18 +641,85 @@ function DailyAttendance(props: {
                 </td></tr>
               )}
               {!loading && rows.map((r) => {
-                const isEditing = editing === r.operatorId;
+                const key = rowKey(r);
+                const isEditing = editing === key;
                 /* Not `isEditing && …` any more: the tablet's one-tap Mark
                    out never opens the row, and a refusal nobody can see is a
                    button that silently does nothing. Both paths clear this
                    before they try again. */
-                const failed = rowError?.operatorId === r.operatorId ? rowError.message : "";
+                const failed = rowError?.operatorId === key ? rowError.message : "";
+                /* LAST NIGHT'S SHIFT, STILL AWAITING ITS OUT (7 Nov 2026): a
+                   line of its own above the operator's line for this date. It
+                   is the shift running, not unfinished attendance. */
+                const night = !r.saved ? r.overnight : null;
+                const nightEditing = editing === nightKey(r);
+                const nightFailed = rowError?.operatorId === nightKey(r) ? rowError.message : "";
                 return (
-                  <Fragment key={r.operatorId}>
+                  <Fragment key={key}>
+                  {night && (
+                    <>
+                    <tr className={`${nightFailed ? "border-b-0" : tr} bg-amber-50/40`}>
+                      <td className={`${td} font-medium text-gray-900`}>
+                        {r.operatorName}
+                        <span className="block text-xs font-normal text-amber-700">Night shift from {dmy(night.date)}</span>
+                      </td>
+                      <td className={td}>{linesLabel(night.lines)}</td>
+                      <td className={td}>
+                        <span className="whitespace-nowrap">
+                          {night.inTime}
+                          <span className="ml-1.5 text-xs font-medium text-amber-700">{dmy(night.date)}</span>
+                        </span>
+                      </td>
+                      <td className={td}>
+                        {nightEditing ? (
+                          <div className="min-w-[8rem]">
+                            <TimeInput value={draft.outTime} onChange={(v) => props.setDraft((d) => ({ ...d, outTime: v }))}
+                              className={`${inp} w-24 ${outError ? "border-red-400 focus:border-red-400 focus:ring-red-100" : ""}`} />
+                            {outError
+                              ? <p role="alert" className="mt-1 text-xs font-medium text-red-600">{outError}</p>
+                              : <p className="mt-1 text-xs text-gray-400">Out on {dmy(date)}{isToday ? `, up to ${now}` : ""}</p>}
+                          </div>
+                        ) : "-"}
+                      </td>
+                      <td className={`${td} font-medium text-gray-900`}>{nightEditing ? draftWorked : "-"}</td>
+                      <td className={`${td} pr-0 text-right`}>
+                        {nightEditing ? (
+                          <div className="flex justify-end gap-2 whitespace-nowrap">
+                            <button type="button" className={btnGhost} onClick={props.cancel} disabled={saving}>Cancel</button>
+                            <button type="button" className={btnPrimary} onClick={() => props.saveRow(nightKey(r))}
+                              disabled={saving || !draft.outTime.trim() || Boolean(outError)}>
+                              {saving ? "Saving…" : "Save"}
+                            </button>
+                          </div>
+                        ) : lastNightOpen(r) ? (
+                          /* The tablet: the Out-Time is stamped with the clock. */
+                          <button type="button" className={btnPrimary} onClick={() => props.markOutLastNight(r)} disabled={saving}>
+                            {saving ? "Saving…" : "Mark out now"}
+                          </button>
+                        ) : rights.anyDate ? (
+                          /* The Plant In-Charge types it. */
+                          <button type="button" className={btnGhost} onClick={() => props.startNightOut(r)} disabled={editing !== null}>
+                            Enter Out-Time
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                    {nightFailed && (
+                      <tr ref={rowErrorRef} className={tr}>
+                        <td colSpan={6} className="pb-3 pr-0">
+                          <p role="alert" className={`${pinned} ${errorBox}`}>{nightFailed}</p>
+                        </td>
+                      </tr>
+                    )}
+                    </>
+                  )}
                   <tr className={failed ? "border-b-0" : tr}>
                     <td className={`${td} font-medium text-gray-900`}>
                       {r.operatorName}
                       {!r.isActive && <span className="ml-2 text-xs font-normal text-gray-400">(off the roster)</span>}
+                      {(r.shiftNo > 1 || manyShifts(r.operatorId)) && (
+                        <span className="block text-xs font-normal text-gray-500">Shift {r.shiftNo}</span>
+                      )}
                     </td>
                     <td className={td}>
                       {isEditing ? (
@@ -646,41 +797,46 @@ function DailyAttendance(props: {
                       {isEditing ? (
                         <div className="flex justify-end gap-2 whitespace-nowrap">
                           <button type="button" className={btnGhost} onClick={props.cancel} disabled={saving}>Cancel</button>
-                          <button type="button" className={btnPrimary} onClick={() => props.saveRow(r.operatorId)} disabled={saving || Boolean(inError) || Boolean(outError)}>
+                          <button type="button" className={btnPrimary} onClick={() => props.saveRow(key)} disabled={saving || Boolean(inError) || Boolean(outError)}>
                             {saving ? "Saving…" : "Save"}
                           </button>
                         </div>
                       ) : r.blocked && !r.saved ? (
-                        lastNightOpen(r) ? (
-                          /* Last night's shift, still open: the one thing to
-                             do to it is stamp the Out-Time, and that is what
-                             lifts the hold. */
-                          <div className="flex flex-col items-end gap-1">
-                            <button type="button" className={btnPrimary} onClick={() => props.markOutLastNight(r)} disabled={saving}>
-                              {saving ? "Saving…" : "Mark out now"}
-                            </button>
-                            <span className="text-xs text-gray-500">In {r.blockedRow?.inTime} on {dmy(r.blockedDate)}</span>
-                          </div>
-                        ) : (
-                          /* Yesterday is unfinished for this operator. Nothing
-                             new may be entered for them until it is, and the
-                             message says which day to go to — the date field
-                             above is how to get there. */
-                          <span role="alert" className="inline-block max-w-[16rem] text-right text-xs font-medium text-red-600">
-                            {INCOMPLETE_PREVIOUS_DAY}
-                            {r.blockedDate && <span className="block font-normal text-gray-500">({dmy(r.blockedDate)})</span>}
-                          </span>
-                        )
+                        /* Yesterday is genuinely unfinished for this operator.
+                           Nothing new may be entered for them until it is, and
+                           the message says which day to go to — the date field
+                           above is how to get there. */
+                        <span role="alert" className="inline-block max-w-[16rem] text-right text-xs font-medium text-red-600">
+                          {INCOMPLETE_PREVIOUS_DAY}
+                          {r.blockedDate && <span className="block font-normal text-gray-500">({dmy(r.blockedDate)})</span>}
+                        </span>
+                      ) : night ? (
+                        /* Still on last night's shift: its Out comes first. */
+                        <span className="inline-block max-w-[14rem] text-right text-xs text-gray-500">Mark last night&rsquo;s shift out first.</span>
                       ) : rights.amendSaved || !r.saved ? (
-                        <button type="button" className={btnGhost} onClick={() => props.startEdit(r)}>
-                          {r.saved ? "Edit" : "Enter"}
-                        </button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button type="button" className={btnGhost} onClick={() => props.startEdit(r)}>
+                            {r.saved ? "Edit" : "Enter"}
+                          </button>
+                          {r.canAddShift && (
+                            <button type="button" className={btnGhost} onClick={() => props.addShift(r)} disabled={editing !== null}
+                              title="The operator was called back: enter another shift on this date">
+                              + Another shift
+                            </button>
+                          )}
+                        </div>
                       ) : r.outTime ? (
                         /* Written, and marked out: the tablet's day with this
-                           operator is over. A correction is the Plant
-                           In-Charge's, so there is no control here at all
-                           rather than one that would be refused. */
-                        <span className="text-xs text-gray-400">Done</span>
+                           operator is over — unless they are called back for
+                           another shift (7 Nov 2026). A correction is the
+                           Plant In-Charge's, so there is no edit control. */
+                        r.canAddShift ? (
+                          <button type="button" className={btnGhost} onClick={() => props.addShift(r)} disabled={editing !== null}>
+                            + Another shift
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-400">Done</span>
+                        )
                       ) : (
                         /* Written, not yet out. ONE TAP, no editor: stamping
                            the Out-Time is the other half of marking
@@ -992,7 +1148,13 @@ function Downloads({ api, operators, operatorsFailed }: { api: string; operators
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
   const [month, setMonth] = useState(thisMonth);
-  const [result, setResult] = useState<{ columns: string[]; rows: Record<string, string | number>[]; description: string } | null>(null);
+  const [result, setResult] = useState<{
+    columns: string[];
+    rows: Record<string, string | number>[];
+    description: string;
+    /** Set for one operator's attendance: the Sum of Total Working Hours. */
+    sumOfHours?: string | null;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -1104,6 +1266,17 @@ function Downloads({ api, operators, operatorsFailed }: { api: string; operators
                     </tr>
                   ))}
                 </tbody>
+                {/* One operator's attendance: the Sum of Total Working Hours of
+                    every record shown, under the table — the same line the
+                    downloaded sheet ends with (7 Nov 2026). */}
+                {result.sumOfHours != null && (
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-300 bg-gray-50">
+                      <td colSpan={result.columns.length - 1} className={`${td} font-semibold text-gray-900`}>{SUM_OF_HOURS_LABEL}</td>
+                      <td className={`${td} font-semibold text-gray-900`} data-sum-of-hours>{result.sumOfHours}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>

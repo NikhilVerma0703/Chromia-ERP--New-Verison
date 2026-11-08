@@ -22,6 +22,8 @@ interface Props {
   /** Rows the current selection would produce — drives the download button. */
   rowCount: number;
   downloadHref: string;
+  /** Trimming Slabs' own count: every slab whose QC Outcome is Trimming now (change 8). */
+  trimmingCount: number;
 }
 
 const KIND_ACCENT: Record<ExportKind, string> = {
@@ -31,6 +33,7 @@ const KIND_ACCENT: Record<ExportKind, string> = {
   SAMPLE_CUTTING: 'peer-checked:border-status-hold peer-checked:text-status-hold',
   RECALIBRATION:
     'peer-checked:border-status-recalibration peer-checked:text-status-recalibration',
+  TRIMMING: 'peer-checked:border-status-trimming peer-checked:text-status-trimming',
 };
 
 /**
@@ -40,7 +43,7 @@ const KIND_ACCENT: Record<ExportKind, string> = {
  * bookmarkable and the preview below always matches what will be downloaded.
  * Only the fields the chosen preset needs are shown; the rest would be noise.
  */
-export function DownloadForm({ query, months, rowCount, downloadHref }: Props) {
+export function DownloadForm({ query, months, rowCount, downloadHref, trimmingCount }: Props) {
   const [kind, setKind] = useState<ExportKind>(query.kind);
   const [preset, setPreset] = useState<RangePreset>(query.preset);
 
@@ -53,7 +56,7 @@ export function DownloadForm({ query, months, rowCount, downloadHref }: Props) {
             <legend className="text-muted mb-3 text-[11px] font-semibold tracking-[0.16em] uppercase">
               Slab Status
             </legend>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               {EXPORT_KINDS.map((value) => (
                 <label key={value} className="relative cursor-pointer">
                   <input
@@ -68,6 +71,11 @@ export function DownloadForm({ query, months, rowCount, downloadHref }: Props) {
                     className={`border-line surface hover:border-line-strong peer-focus-visible:ring-brand-500 block rounded-lg border px-4 py-3.5 text-sm font-medium transition-colors peer-focus-visible:ring-2 ${KIND_ACCENT[value]}`}
                   >
                     {EXPORT_KIND_LABELS[value]}
+                    {value === 'TRIMMING' ? (
+                      <span className="text-foreground mt-1 block text-[22px] leading-none font-semibold tabular-nums" data-kpi="trimming">
+                        {trimmingCount}
+                      </span>
+                    ) : null}
                     <span className="text-muted mt-0.5 block text-xs font-normal">
                       By {REPORT_DATE_LABELS[value].toLowerCase()}, oldest first
                     </span>

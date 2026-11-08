@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import { EmptyState, PageHeader, Stat } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
 import { GradeBadge } from '@/components/chromia/ui/status';
+import { SlabActions } from '@/components/chromia/ui/delete-slab-button';
+import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import {
   buildDispatchedQuery,
   dispatchMonthOptions,
@@ -20,6 +22,7 @@ import {
 } from '@/lib/chromia/server/repositories/dispatch-repository';
 import { requirePageUser } from '@/lib/pageUser';
 
+import { AlterFromDispatchedForm } from './alter-from-dispatched-form';
 import { DispatchedFindASlab } from './find-a-slab';
 
 export const metadata: Metadata = { title: 'Dispatched' };
@@ -35,8 +38,8 @@ const { th, td, tdMuted, tdNum } = dataTable;
 /**
  * Dispatched (was Dispatch; renamed 27 Oct 2026).
  *
- * A record of every slab that has left the plant by dispatch — read-only:
- * nothing here edits, deletes or dispatches. Slabs are dispatched from the
+ * A record of every slab that has left the plant by dispatch. Slabs are
+ * dispatched from the
  * Stockyard (Stock Outcome → Dispatch); the old Awaiting dispatch queue went
  * into the Stockyard with migration 0005.
  *
@@ -52,6 +55,11 @@ const { th, td, tdMuted, tdNum } = dataTable;
  *
  * Dispatch Date is the dispatch record's own date: the one chosen when the
  * slab was sent. The Production Date beside it is the slab's, unchanged.
+ *
+ * ALTER FROM DISPATCHED (change 12, 8 Nov 2026): each row can move its slab
+ * back — In Stock or Recalibration, on a date — and leaves this table as it
+ * does (alterFromDispatched). Actions: Edit (the Dispatched Edit form: the
+ * slab's details and the same move) and the global Delete.
  */
 export default async function DispatchedPage({
   searchParams,
@@ -153,6 +161,8 @@ export default async function DispatchedPage({
                   <th className={`${th} text-right`}>Thickness (cm)</th>
                   <th className={th}>Grade</th>
                   <th className={th}>Slab Remarks</th>
+                  <th className={th}>Alter From Dispatched</th>
+                  <th className={`${th} text-right`}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -170,6 +180,22 @@ export default async function DispatchedPage({
                     </td>
                     <td className={`${td} max-w-[16rem]`}>
                       {manualRemark(slab.remarks, slab.disposition) ?? <span className="text-muted">—</span>}
+                    </td>
+                    <td className={td}>
+                      <AlterFromDispatchedForm
+                        slabId={slab.slabId}
+                        slabNo={slab.slabNo}
+                        today={toPlantDateInput(now)}
+                        dispatchedOn={toPlantDateInput(slab.dispatchDate)}
+                      />
+                    </td>
+                    <td className={`${td} text-right`}>
+                      {/* Edit opens the Dispatched Edit form: the slab's details and Alter From Dispatched (change 12). */}
+                      <SlabActions
+                        editHref={`${APP_ROUTES.dispatch}/${slab.slabId}/edit`}
+                        slabId={slab.slabId}
+                        slabNo={slab.slabNo}
+                      />
                     </td>
                   </tr>
                 ))}

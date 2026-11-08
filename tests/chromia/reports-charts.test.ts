@@ -8,9 +8,13 @@ import {
   dailyProduction,
   designBreakdown,
   NO_DESIGN,
+  OTHERS,
   parseTrendRange,
   recalibrationAttempts,
   stockDistribution,
+  TOP_DESIGNS,
+  topDesigns,
+  topDesignsWithOthers,
   type ReportSlab,
 } from '@/lib/chromia/reports-charts';
 
@@ -125,5 +129,49 @@ describe('Reports — the page', () => {
   it('is named Reports in the navigation', () => {
     expect(read('src/lib/chromia/config/navigation.ts')).toMatch(/\{ title: 'Reports', href: '\/chromia\/reports'/);
     expect(read('src/lib/navModel.ts')).toMatch(/href: "\/chromia\/reports",\s+icon: I\.ceo,\s+label: "Reports"/);
+  });
+});
+
+describe('Reports — Top 10 designs and Others (change 6, 7 Nov 2026)', () => {
+  // Fourteen designs: D1 has 14 slabs, D2 13 … D14 1 — 105 slabs, plus one Trimming slab of D1.
+  const many: ReportSlab[] = Array.from({ length: 14 }, (_, i) =>
+    Array.from({ length: 14 - i }, () => slab('IN_STOCK', `D${i + 1}`, '2026-10-28', 0, 'STOCK')),
+  ).flat();
+  many.push(slab('GRADED', 'D1', '2026-10-28', 0, 'TRIMMING'));
+  const rows = designBreakdown(many);
+
+  it('Most Produced Designs: the Top 10 by slabs produced, then Others with every remaining design', () => {
+    const bars = topDesignsWithOthers(rows);
+    expect(bars).toHaveLength(TOP_DESIGNS + 1);
+    expect(bars.slice(0, 10).map((b) => b.label)).toEqual(['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10']);
+    expect(bars.map((b) => b.value).slice(0, 10)).toEqual([15, 13, 12, 11, 10, 9, 8, 7, 6, 5]);
+    expect(bars[10]).toEqual({ label: OTHERS, value: 4 + 3 + 2 + 1, designs: 4 });
+    // Every slab is in exactly one bar, so the shares are of the whole and add up to 100%.
+    expect(bars.reduce((n, b) => n + b.value, 0)).toBe(many.length);
+  });
+
+  it('sorted by volume, not alphabetically: D10 (5) is above D11 … and D2 (13) above D10', () => {
+    const labels = topDesignsWithOthers(rows).map((b) => b.label);
+    expect(labels.indexOf('D2')).toBeLessThan(labels.indexOf('D10'));
+    expect(labels).not.toContain('D11');
+  });
+
+  it('no Others bar when there are ten designs or fewer', () => {
+    expect(topDesignsWithOthers(designBreakdown(yard)).map((b) => b.label)).not.toContain(OTHERS);
+  });
+
+  it('Design-Wise: only the Top 10, each in the seven places — Trimming counted on its own', () => {
+    const top = topDesigns(rows);
+    expect(top.map((r) => r.design)).toEqual(['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10']);
+    expect(PRODUCTION_PLACES).toEqual(['STOCK', 'DISPATCHED', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION', 'TRIMMING', 'IN_PROCESSING']);
+    const d1 = top[0]!;
+    expect(d1.places).toMatchObject({ STOCK: 14, TRIMMING: 1, IN_PROCESSING: 0 });
+    for (const row of top) expect(PRODUCTION_PLACES.reduce((n, p) => n + row.places[p], 0)).toBe(row.total);
+  });
+
+  it('the page draws the Top 10 (with Others) and the Top 10 design-wise', () => {
+    const page = read('src/app/chromia/reports/page.tsx');
+    expect(page).toMatch(/topDesignsWithOthers\(charts\.designs\)/);
+    expect(page).toMatch(/<StackedPlaceBars rows=\{topDesigns\(charts\.designs\)/);
   });
 });

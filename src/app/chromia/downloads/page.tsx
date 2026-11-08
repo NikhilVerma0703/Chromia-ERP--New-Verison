@@ -15,6 +15,7 @@ import {
 } from '@/lib/chromia/exports';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
+import { trimmingPlaceSlabIds } from '@/lib/chromia/server/repositories/trimming-repository';
 import { requirePageUser } from '@/lib/pageUser';
 
 import { DownloadForm } from './download-form';
@@ -97,9 +98,11 @@ export default async function DownloadsPage({
   const productionQuery = parseRangeQuery(params, 'p');
   const productionRange = resolveRange(productionQuery);
 
-  const [report, production] = await Promise.all([
+  const [report, production, inTrimming] = await Promise.all([
     loadDownloadReport(query.kind, range),
     loadDownloadReport('PRODUCTION', productionRange),
+    // Trimming Slabs (change 8): the slabs whose QC Outcome is Trimming now.
+    trimmingPlaceSlabIds(),
   ]);
 
   const downloadHref = `${API_ROUTES.exports}?${buildExportQuery(query)}`;
@@ -144,6 +147,7 @@ export default async function DownloadsPage({
         months={months}
         rowCount={report.rows.length}
         downloadHref={downloadHref}
+        trimmingCount={inTrimming.length}
       />
 
       <SectionCard

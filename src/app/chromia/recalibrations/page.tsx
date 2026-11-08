@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 import { EmptyState, PageHeader } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
-import { EditLink } from '@/components/chromia/ui/edit-link';
+import { SlabActions } from '@/components/chromia/ui/delete-slab-button';
 import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { parsePage, RECALIBRATION_PAGE_SIZE } from '@/lib/chromia/list-limits';
@@ -209,7 +209,7 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
                         <span className={STAGE_CLASS[stageOf(row.state)] ?? ''}>{statusLabel(row.state, row.grade)}</span>
                       </td>
                       <td className={`${td} text-right`}>
-                        <EditLink href={`${APP_ROUTES.recalibrations}/${row.slabId}`} slabNo={row.slabNo} />
+                        <SlabActions editHref={`${APP_ROUTES.recalibrations}/${row.slabId}`} slabId={row.slabId} slabNo={row.slabNo} />
                       </td>
                     </tr>
                   ))}

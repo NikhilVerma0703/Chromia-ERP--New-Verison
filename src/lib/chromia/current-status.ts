@@ -25,6 +25,7 @@ const PLACE_STATUS: Record<ProductionPlace, string> = {
   APPROVED: 'Approved',
   SAMPLE_CUTTING: 'Sample Cutting',
   RECALIBRATION: 'Recalibration',
+  TRIMMING: 'Trimming',
   IN_PROCESSING: 'In-Processing',
 };
 
@@ -34,6 +35,7 @@ export const PLACE_TONE: Record<ProductionPlace, Tone> = {
   APPROVED: 'approved',
   SAMPLE_CUTTING: 'hold',
   RECALIBRATION: 'recalibration',
+  TRIMMING: 'trimming',
   IN_PROCESSING: 'processing',
 };
 

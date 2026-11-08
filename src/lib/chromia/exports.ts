@@ -36,7 +36,7 @@ import {
  * dates and S.No. are lib/chromia/download-reports.ts. In Stock is the
  * slabs on the racks now; the other four, the slabs in that status.
  */
-export const EXPORT_KINDS = ['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION'] as const;
+export const EXPORT_KINDS = ['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION', 'TRIMMING'] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
 
 export const EXPORT_KIND_LABELS: Record<ExportKind, string> = {
@@ -45,6 +45,8 @@ export const EXPORT_KIND_LABELS: Record<ExportKind, string> = {
   APPROVED: 'Approved',
   SAMPLE_CUTTING: 'Sample Cutting',
   RECALIBRATION: 'Recalibration',
+  // Right after Recalibration (7 Nov 2026, change 8).
+  TRIMMING: 'Trimming Slabs',
 };
 
 export const RANGE_PRESETS = ['TODAY', 'LAST_WEEK', 'LAST_MONTH', 'MONTH', 'CUSTOM'] as const;

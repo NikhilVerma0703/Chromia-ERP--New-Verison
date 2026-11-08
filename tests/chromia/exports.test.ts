@@ -20,6 +20,7 @@ import {
   type ExportQuery,
 } from '@/lib/chromia/exports';
 import { plantInstant, toPlantTimeInput } from '@/lib/chromia/plant-time';
+import { buildReport, type ReportRecord } from '@/lib/chromia/download-reports';
 
 /**
  * Fixed "now" so the maths is deterministic: Fri 14 Aug 2026, 15:30 in the
@@ -114,9 +115,32 @@ describe('guards and parsing', () => {
     expect(isRangePreset('YEARLY')).toBe(false);
   });
 
-  it('offers the five By Slab Status reports, in the order asked for (change 12)', () => {
-    expect([...EXPORT_KINDS]).toEqual(['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION']);
-    expect(EXPORT_KINDS.map((kind) => EXPORT_KIND_LABELS[kind])).toEqual(['In Stock (Current Stock)', 'Dispatched', 'Approved', 'Sample Cutting', 'Recalibration']);
+  it('offers the six By Slab Status reports, in the order asked for — Trimming Slabs right after Recalibration (change 12; change 8)', () => {
+    expect([...EXPORT_KINDS]).toEqual(['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION', 'TRIMMING']);
+    expect(EXPORT_KINDS.map((kind) => EXPORT_KIND_LABELS[kind])).toEqual(['In Stock (Current Stock)', 'Dispatched', 'Approved', 'Sample Cutting', 'Recalibration', 'Trimming Slabs']);
+    expect(parseExportQuery({ kind: 'TRIMMING' }, NOW).kind).toBe('TRIMMING');
+  });
+
+  it('Trimming Slabs: the Trimming page’s columns, its own status, oldest production date first', () => {
+    const at = (day: string) => new Date(`${day}T00:00:00Z`);
+    const record = (slabNo: string, day: string, extra: Partial<ReportRecord> = {}): ReportRecord => ({
+      eventDate: at(day), productionDate: at(day), createdAt: at(day), batchNo: 'B1', slabNo, baseMaterial: 'Astral Mist',
+      design: 'AlmondMist1', thicknessCm: 3, inTime: null, grade: 'C', disposition: 'TRIMMING', currentStatus: 'Ready for Trimming',
+      remarks: null, ...extra,
+    });
+    const report = buildReport('TRIMMING', [
+      record('T2', '2026-11-05', { trim: '3 cm → 2 cm (30 mm → 20 mm)', sentDate: at('2026-11-06'), currentStatus: 'Sent for Trimming (3 cm → 2 cm)' }),
+      record('T1', '2026-11-01'),
+    ]);
+    expect(report.columns.map((c) => c.label)).toEqual([
+      'S.No.', 'Production Date', 'Batch No.', 'Slab No.', 'Base Material / Slab Name', 'File Name / Planned Design', 'Thickness (cm)',
+      'Grade', 'Slab Outcome', 'Trimmed From → To', 'Sent Date', 'Received Date', 'Current Status',
+    ]);
+    expect(report.rows.map((r) => [r[0], r[3], r[8], r[12]])).toEqual([
+      [1, 'T1', 'Trimming', 'Ready for Trimming'],
+      [2, 'T2', 'Trimming', 'Sent for Trimming (3 cm → 2 cm)'],
+    ]);
+    expect(report.rows[1]![9]).toBe('3 cm → 2 cm (30 mm → 20 mm)');
   });
 
   it('defaults to today’s dispatch sheet', () => {

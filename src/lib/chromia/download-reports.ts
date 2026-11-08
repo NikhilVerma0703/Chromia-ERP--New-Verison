@@ -21,7 +21,9 @@ import { formatPlantReportDay, PLANT_TIME_ZONE } from './plant-time.ts';
  * both read it; export-repository.ts turns the database into ReportRecords.
  */
 
-export const STATUS_REPORTS = ['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION'] as const;
+// TRIMMING (7 Nov 2026, change 8): right after Recalibration — the slabs
+// whose QC Outcome is Trimming now, the Dashboard's Trimming place.
+export const STATUS_REPORTS = ['STOCK', 'DISPATCH', 'APPROVED', 'SAMPLE_CUTTING', 'RECALIBRATION', 'TRIMMING'] as const;
 export type StatusReport = (typeof STATUS_REPORTS)[number];
 export type ReportKind = 'PRODUCTION' | StatusReport;
 
@@ -32,6 +34,7 @@ export const REPORT_LABELS: Record<ReportKind, string> = {
   APPROVED: 'Approved',
   SAMPLE_CUTTING: 'Sample Cutting',
   RECALIBRATION: 'Recalibration',
+  TRIMMING: 'Trimming Slabs',
 };
 
 /** The date each report is filtered on and sorted by, oldest first. */
@@ -42,6 +45,7 @@ export const REPORT_DATE_LABELS: Record<ReportKind, string> = {
   APPROVED: 'Approved Date',
   SAMPLE_CUTTING: 'Sample Cutting Date',
   RECALIBRATION: 'Production Date',
+  TRIMMING: 'Production Date',
 };
 
 /** One slab (one row) of a report, as the database says it. */
@@ -63,6 +67,8 @@ export interface ReportRecord {
   currentStatus: string;
   /** Slab Remarks as that page shows them. */
   remarks: string | null;
+  // Trimming only: "3 cm → 2 cm (30 mm → 20 mm)", or "" when not chosen yet.
+  trim?: string;
   // Recalibration only.
   reason?: string | null;
   attemptNumber?: number | null;
@@ -112,6 +118,7 @@ const C = {
   attempt: col('Attempt Number', 'outcome', 14, (r) => (r.attemptNumber ? (ORDINALS[r.attemptNumber - 1] ?? `${r.attemptNumber}th`) : DASH)),
   sentDate: col('Sent Date', 'outcome', 16, (r) => day(r.sentDate)),
   receivedDate: col('Received Date', 'outcome', 16, (r) => day(r.receivedDate)),
+  trim: col('Trimmed From → To', 'outcome', 30, (r) => r.trim || DASH),
   event: (label: string) => col(label, 'outcome', 18, (r) => day(r.eventDate)),
 };
 
@@ -129,6 +136,11 @@ export const REPORT_COLUMNS: Record<ReportKind, ReportColumn[]> = {
   RECALIBRATION: [
     C.productionDate, C.batchNo, C.slabNo, C.baseMaterial, C.design, C.thickness, C.grade, C.slabOutcome,
     C.reason, C.remarks, C.attempt, C.sentDate, C.receivedDate, C.currentStatus,
+  ],
+  // The Trimming page's columns (its Action column aside), in its order.
+  TRIMMING: [
+    C.productionDate, C.batchNo, C.slabNo, C.baseMaterial, C.design, C.thickness, C.grade, C.slabOutcome,
+    C.trim, C.sentDate, C.receivedDate, C.currentStatus,
   ],
 };
 

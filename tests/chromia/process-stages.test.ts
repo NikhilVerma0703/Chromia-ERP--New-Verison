@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  allowedDispositions,
   DISPOSITION_LABELS,
   GRADE_ALLOWED_DISPOSITIONS,
   MAX_RECALIBRATION_ATTEMPTS,
@@ -66,7 +67,21 @@ describe('grading and dispositions', () => {
     ]);
     // Waste is not offered at QC on this line: a failed slab goes back out for
     // recalibration, and the fifth failure is written off from that section.
-    expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.C]).toEqual([Disposition.RECALIBRATION]);
+    // Trimming is Grade C's second outcome (7 Nov 2026).
+    expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.C]).toEqual([Disposition.RECALIBRATION, Disposition.TRIMMING]);
+  });
+
+  it('offers Trimming on Slab Entry only — the Recalibration re-grade keeps C → Recalibration', () => {
+    expect(allowedDispositions('C', { trimming: true })).toEqual([Disposition.RECALIBRATION, Disposition.TRIMMING]);
+    expect(allowedDispositions('C', { trimming: false })).toEqual([Disposition.RECALIBRATION]);
+    expect(allowedDispositions('A', { trimming: true })).toEqual([Disposition.STOCK]);
+    expect(allowedDispositions('B', { trimming: false })).toEqual([Disposition.STOCK, Disposition.SAMPLE_CUTTING]);
+    expect(allowedDispositions('', { trimming: true })).toEqual([]);
+  });
+
+  it('never allows trimming for a passing grade', () => {
+    expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.A]).not.toContain(Disposition.TRIMMING);
+    expect(GRADE_ALLOWED_DISPOSITIONS[SlabGrade.B]).not.toContain(Disposition.TRIMMING);
   });
 
   it('never allows recalibration for a passing grade', () => {

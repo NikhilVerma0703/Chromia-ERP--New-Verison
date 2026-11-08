@@ -6,6 +6,7 @@ import { createLogger } from '@/lib/chromia/logger';
 import { qcCorrectionRefusal } from '@/lib/chromia/qc-correction';
 import { claimSlab } from '@/lib/chromia/server/services/disposition-service';
 import type { IntakeQcInput } from '@/lib/chromia/validation/slab';
+import { openTrimmingRecord } from '@/lib/chromia/server/services/trimming-open';
 
 const log = createLogger('intake-qc');
 
@@ -49,10 +50,20 @@ export async function applyIntakeGrade(
       slabNo: true,
       recalibrationCount: true,
       cycles: { orderBy: { cycleNumber: 'desc' }, take: 1, select: { id: true } },
+      recalibrations: { select: { id: true }, take: 1 },
     },
   });
 
   if (!slab) throw new NotFoundError('Slab');
+
+  // TRIMMING IS SLAB ENTRY'S (7 Nov 2026): a slab that has been on a
+  // recalibration journey is re-graded on the Recalibration page, where
+  // Grade C goes to Recalibration only.
+  if (disposition === Disposition.TRIMMING && slab.recalibrations.length > 0) {
+    throw new BusinessRuleViolationError(
+      `Slab ${slab.slabNo} has a recalibration record, so Grade C goes to Recalibration only — Trimming is for a slab that has not been to recalibration`,
+    );
+  }
 
   const cycleId = slab.cycles[0]?.id;
   if (!cycleId) throw new NotFoundError('Process cycle');
@@ -108,6 +119,9 @@ export async function applyIntakeGrade(
         note: `Grade ${grade} → ${DISPOSITION_LABELS[disposition]} (decided at intake)`,
       },
     });
+
+    // Into the Trimming table, in this same save (7 Nov 2026).
+    if (disposition === Disposition.TRIMMING) await openTrimmingRecord(tx, slab.id, userId);
   });
 
   log.info({ slabNo: slab.slabNo, grade, disposition }, 'Intake grade recorded');

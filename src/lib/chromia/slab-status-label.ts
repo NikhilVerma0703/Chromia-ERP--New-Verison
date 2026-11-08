@@ -56,5 +56,10 @@ export function slabStatusView(
     return { label: 'Pending Recalibration', tone: 'recalibration' };
   }
 
+  // Graded C → Trimming (7 Nov 2026): on the Trimming page, not merely "Graded".
+  if (disposition === Disposition.TRIMMING && status === SlabStatus.GRADED) {
+    return { label: 'Trimming', tone: 'trimming' };
+  }
+
   return { label: SLAB_STATUS_LABELS[status], tone: STATUS_TONE[status] };
 }
