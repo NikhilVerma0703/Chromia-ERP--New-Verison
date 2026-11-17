@@ -33,12 +33,16 @@ export const APP_ROUTES = {
   /** The attendance register, shared with the Robo line — see
    *  lib/attendance/server.ts for why there is one of it and two ways in. */
   attendance: '/chromia/attendance',
+  /** Orders — customer orders, standalone from every slab workflow (17 Nov 2026). */
+  orders: '/chromia/orders',
 } as const;
 
 export const API_ROUTES = {
   exports: '/api/chromia/exports',
   /** One saved slab photo: `${slabPhoto}/<photo id>`. */
   slabPhoto: '/api/chromia/slab-photo',
+  /** One saved order Reference Photo: `${orderPhoto}/<photo id>`. */
+  orderPhoto: '/api/chromia/order-photo',
 } as const;
 
 export const PAGINATION = {

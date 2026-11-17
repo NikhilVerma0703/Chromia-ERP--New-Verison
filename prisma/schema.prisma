@@ -1261,6 +1261,44 @@ model ChromiaTrimming {
   @@map("chromia_trimming")
 }
 
+/// A customer order, recorded on the Orders page (17 Nov 2026). Standalone:
+/// no link to any slab, and read by no production count, KPI or report.
+/// Every field may be empty except the customer's name. The status is not
+/// stored: an order is Completed once it has an Actual Delivery Date.
+model ChromiaOrder {
+  id String @id @default(uuid())
+
+  // Order Details
+  customerName     String  @map("customer_name")
+  requestedBy      String? @map("requested_by")
+  designName       String? @map("design_name")
+  baseMaterialName String? @map("base_material_name")
+  printingFileName String? @map("printing_file_name")
+  quantity         Int?
+  thicknessMm      Decimal? @map("thickness_mm") @db.Decimal(18, 3)
+  /// Polishing, Leather, Honed, or what was typed under Others.
+  finishingType         String?   @map("finishing_type")
+  requestedDeliveryDate DateTime? @map("requested_delivery_date")
+
+  // Delivery Status
+  actualDeliveryDate DateTime? @map("actual_delivery_date")
+  personInCharge     String?   @map("person_in_charge")
+  remarks            String?
+
+  /// Reference Photo: entry_photo ids (model 'ChromiaOrder'), as taken and as annotated.
+  photoOriginalId String? @map("photo_original_id")
+  photoEditedId   String? @map("photo_edited_id")
+
+  createdById String?  @map("created_by_id") // -> users.id (no hard FK)
+  updatedById String?  @map("updated_by_id") // -> users.id (no hard FK)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@index([actualDeliveryDate])
+  @@map("chromia_order")
+}
+
 /// One run of the historical Excel register importer (e.g. "PRO MAY").
 model ChromiaImportBatch {
   id          String              @id @default(uuid())

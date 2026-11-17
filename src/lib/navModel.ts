@@ -98,6 +98,7 @@ export const CHROMIA_ITEMS: NavItem[] = [
   { href: "/chromia/downloads",              icon: I.box,      label: "Downloads" },
   { href: "/chromia/import",                 icon: I.entry,    label: "Import" },
   { href: "/chromia/attendance",             icon: I.attendance, label: "Attendance" },
+  { href: "/chromia/orders",                 icon: I.ledger,   label: "Orders" },
 ];
 
 const section = (label: string, items: NavItem[]): NavBlock[] => (items.length ? [{ kind: "section", label, items }] : []);
@@ -114,6 +115,7 @@ export function chromiaNav(): NavModel {
     section("Reports", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/reports" || t.href === "/chromia/downloads")),
     section("Setup", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/import")),
     section("Attendance", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/attendance")),
+    section("Orders", CHROMIA_ITEMS.filter((t) => t.href === "/chromia/orders")),
     section("Inventory", [{ href: "/slab-intake", icon: I.entry, label: "Slab Intake" }]),
   );
 }

@@ -40,4 +40,6 @@ export const navigation: readonly NavItem[] = [
   { title: 'Import', href: '/chromia/import', icon: 'import' },
   // Last, so swiping on past Import reaches it and nothing before it moves.
   { title: 'Attendance', href: '/chromia/attendance', icon: 'attendance' },
+  // Customer orders (17 Nov 2026): standalone, so it goes last and nothing moves.
+  { title: 'Orders', href: '/chromia/orders', icon: 'orders' },
 ];
