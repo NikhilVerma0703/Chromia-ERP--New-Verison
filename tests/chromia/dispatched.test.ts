@@ -7,6 +7,7 @@ import {
   dispatchDateWhere,
   dispatchMonthOptions,
   dispatchWindows,
+  dispatchedSlabWhere,
   hasDispatchedFilters,
   monthLabel,
   parseDispatchedFilters,
@@ -82,6 +83,19 @@ describe('Dispatched → Find a Slab: dispatch-date filters (27 Oct 2026)', () =
     expect(q.get('baseMaterial')).toBe('Super White');
     expect(q.get('month')).toBe('2026-09');
     expect(q.get('from')).toBeNull();
+  });
+
+  it('Slab Number (17 Nov 2026): any part of it, any case, alone or with the rest', () => {
+    const f = parseDispatchedFilters({ slabNo: ' 9004 ' });
+    expect(f.slabNo).toBe('9004');
+    expect(hasDispatchedFilters(f)).toBe(true);
+    expect(dispatchedSlabWhere(f)).toEqual({ slabNo: { contains: '9004', mode: 'insensitive' } });
+    expect(new URLSearchParams(buildDispatchedQuery(f)).get('slabNo')).toBe('9004');
+    const both = dispatchedSlabWhere(parseDispatchedFilters({ slabNo: 'a1', batchNo: '1300' }));
+    expect(Object.keys(both).sort()).toEqual(['batch', 'slabNo']);
+    const form = read('src/app/chromia/dispatch/find-a-slab.tsx');
+    expect(form.indexOf('label="Slab Number"')).toBeGreaterThan(form.indexOf('label="Batch Number"'));
+    expect(form.indexOf('label="Slab Number"')).toBeLessThan(form.indexOf('label="Base Material / Slab Name"'));
   });
 });
 

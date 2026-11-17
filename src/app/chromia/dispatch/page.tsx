@@ -47,8 +47,9 @@ const { th, td, tdMuted, tdNum } = dataTable;
  *
  *   Dashboard        Total Dispatched Slabs, Current Month and Previous Month,
  *                    by DISPATCH date on the plant calendar — never filtered;
- *   Find a Slab      Dispatch Date and Dispatch Date Range, Batch, Material and
- *                    Design, alone or together (lib/chromia/dispatched-filters);
+ *   Find a Slab      Dispatch Date and Dispatch Date Range, Batch, Slab Number,
+ *                    Material and Design, alone or together
+ *                    (lib/chromia/dispatched-filters);
  *   Dispatched Slabs every dispatched slab, newest dispatch first — all of them
  *                    until a filter narrows it, so its count with no filter is
  *                    Total Dispatched Slabs (dispatch-repository counts both).
@@ -119,6 +120,7 @@ export default async function DispatchedPage({
             from: filters.from,
             to: filters.to,
             batchNo: filters.batchNo,
+            slabNo: filters.slabNo,
             baseMaterial: filters.baseMaterial,
             fileName: filters.fileName,
           }}

@@ -16,6 +16,7 @@ export interface DispatchedFormValues {
   from: string;
   to: string;
   batchNo: string;
+  slabNo: string;
   baseMaterial: string;
   fileName: string;
 }
@@ -40,8 +41,9 @@ const prominentLabel = 'text-[15px] font-semibold text-foreground';
  * Dispatch Date and Dispatch Date Range lead, on their own highlighted row;
  * the range asks for a month (Month-wise) or a From and To (Custom) only when
  * that kind is chosen. Batch, material and design are type-ahead dropdowns of
- * the values dispatched slabs carry. Apply Filters runs any one of them or
- * any mix; Clear Filters returns to every dispatched slab.
+ * the values dispatched slabs carry; Slab Number (17 Nov 2026) is typed, and
+ * any part of it matches. Apply Filters runs any one of them or any mix; Clear
+ * Filters returns to every dispatched slab.
  *
  * The page keys this on the current query, so Clear remounts it empty.
  */
@@ -141,7 +143,7 @@ export function DispatchedFindASlab({ values, options }: { values: DispatchedFor
           </div>
         </div>
 
-        <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Batch Number" htmlFor="batchNo">
             <ComboInput
               id="batchNo"
@@ -149,6 +151,18 @@ export function DispatchedFindASlab({ values, options }: { values: DispatchedFor
               options={options.batchNos}
               defaultValue={values.batchNo}
               placeholder="Type or pick a batch"
+              className={`${field} font-mono`}
+            />
+          </Field>
+
+          <Field label="Slab Number" htmlFor="slabNo">
+            <input
+              id="slabNo"
+              name="slabNo"
+              type="search"
+              defaultValue={values.slabNo}
+              placeholder="Type a slab number"
+              maxLength={60}
               className={`${field} font-mono`}
             />
           </Field>

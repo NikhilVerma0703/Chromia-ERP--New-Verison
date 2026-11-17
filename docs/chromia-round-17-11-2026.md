@@ -12,6 +12,7 @@ Each change is one commit on branch `chromia-round-17-11-2026`, started from
 | 2 | Attendance: Out-Time the next day for any In-Time, and shifts of any length | Done | See `git log`: "Chromia change 2 (17 Nov round)" |
 | 3 | Edit and Delete for operators on Slab Records, Stockyard, Dispatched, Approved Slabs, Trimming and Recalibration | Done | See `git log`: "Chromia change 3 (17 Nov round)" |
 | 4 | Slab Records Edit: full Slab Entry for every slab, and any QC Grade and Outcome (Recalibration ⇄ Stock and the rest) | Done | See `git log`: "Chromia change 4 (17 Nov round)" |
+| 5 | Dispatched → Find a Slab: a Slab Number field | Done | See `git log`: "Chromia change 5 (17 Nov round)" |
 
 Each change below has the same headings:
 
@@ -363,3 +364,42 @@ None.
 
 - No schema change. Port the five source files and the two tests.
 - In Pacific-ERP, re-run the workflow checker equivalent or test by hand: a slab waiting, out, and back from recalibration, each corrected to Stock from Slab Records → Edit.
+
+---
+
+### Change #5: Dispatched → Find a Slab gets a Slab Number field
+
+#### Requirement (as given)
+
+> make a field for "slab number " in the "Find a Slab" subsection in the "dispatched" page/section
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Placement:** typed, between Batch Number and Base Material / Slab Name. That row now has four fields.
+- **Matching:** any part of the number matches, ignoring case ("0040" finds 900401), as on Stockyard's slab-number search.
+- **Combining:** it narrows the list alone or together with every other filter. Clear Filters empties it.
+
+#### Implemented
+
+- `src/lib/chromia/dispatched-filters.ts`: `slabNo` in the filters, the query string and the slab condition.
+- `src/app/chromia/dispatch/find-a-slab.tsx`: the field.
+- `src/app/chromia/dispatch/page.tsx`: passes it.
+- Test in `tests/chromia/dispatched.test.ts`.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **Checks:** typecheck clean; Vitest passes, including the new test.
+- **In the browser, on the test database, with three dispatched slabs:**
+  - "0040" listed only 900401 ("1 slab · filtered") and stayed in the box after Apply Filters.
+  - Slab Number "900" with Batch 1300 listed 900201 and 900102.
+  - "zzz" said "No dispatched slab matches these filters."
+  - No console errors.
+- **Not verified:** nothing has been run on Pacific-ERP.
+
+#### Main ERP notes
+
+Port the three files and the test. No schema change.

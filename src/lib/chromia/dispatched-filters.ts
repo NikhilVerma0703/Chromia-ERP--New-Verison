@@ -11,8 +11,9 @@
  *                        Custom      — From and To, both included.
  *
  * With both a Dispatch Date and a range, a slab must satisfy both. Batch,
- * material and design match anywhere in the value, ignoring case, as the
- * type-ahead suggests. Any one filter, or any mix, narrows the same list.
+ * slab number (17 Nov 2026), material and design match anywhere in the value,
+ * ignoring case, as the type-ahead suggests. Any one filter, or any mix,
+ * narrows the same list.
  */
 import { addPlantDays, isPlantDayKey, plantDayRange, toPlantDateInput } from '@/lib/chromia/plant-time';
 import type { RawSearchParams } from '@/lib/chromia/simple-filters';
@@ -39,6 +40,8 @@ export interface DispatchedFilters {
   from: string;
   to: string;
   batchNo: string;
+  /** Any part of the slab number, any case (17 Nov 2026). */
+  slabNo: string;
   baseMaterial: string;
   fileName: string;
 }
@@ -61,13 +64,14 @@ export function parseDispatchedFilters(params: RawSearchParams): DispatchedFilte
     from: day(first(params.from)),
     to: day(first(params.to)),
     batchNo: first(params.batchNo).slice(0, 80),
+    slabNo: first(params.slabNo).slice(0, 60),
     baseMaterial: first(params.baseMaterial).slice(0, 120),
     fileName: first(params.fileName).slice(0, 120),
   };
 }
 
 export function hasDispatchedFilters(f: DispatchedFilters): boolean {
-  return Boolean(f.dispatchDate || f.range || f.batchNo || f.baseMaterial || f.fileName);
+  return Boolean(f.dispatchDate || f.range || f.batchNo || f.slabNo || f.baseMaterial || f.fileName);
 }
 
 /** The last day of a `yyyy-mm`. */
@@ -145,10 +149,11 @@ export function dispatchDateWhere(f: DispatchedFilters, now: Date = new Date()):
   };
 }
 
-/** Prisma condition on the dispatched slab for batch, material and design. */
+/** Prisma condition on the dispatched slab for batch, slab number, material and design. */
 export function dispatchedSlabWhere(f: DispatchedFilters): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   if (f.batchNo) where.batch = { batchNo: { contains: f.batchNo, mode: 'insensitive' } };
+  if (f.slabNo) where.slabNo = { contains: f.slabNo, mode: 'insensitive' };
   if (f.baseMaterial) where.baseMaterial = { name: { contains: f.baseMaterial, mode: 'insensitive' } };
   if (f.fileName) {
     where.plannedDesign = {
@@ -171,6 +176,7 @@ export function buildDispatchedQuery(f: DispatchedFilters): string {
     from: f.range === 'CUSTOM' ? f.from : '',
     to: f.range === 'CUSTOM' ? f.to : '',
     batchNo: f.batchNo,
+    slabNo: f.slabNo,
     baseMaterial: f.baseMaterial,
     fileName: f.fileName,
   };
