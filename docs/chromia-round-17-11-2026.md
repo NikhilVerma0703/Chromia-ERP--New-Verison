@@ -13,6 +13,7 @@ Each change is one commit on branch `chromia-round-17-11-2026`, started from
 | 3 | Edit and Delete for operators on Slab Records, Stockyard, Dispatched, Approved Slabs, Trimming and Recalibration | Done | See `git log`: "Chromia change 3 (17 Nov round)" |
 | 4 | Slab Records Edit: full Slab Entry for every slab, and any QC Grade and Outcome (Recalibration ⇄ Stock and the rest) | Done | See `git log`: "Chromia change 4 (17 Nov round)" |
 | 5 | Dispatched → Find a Slab: a Slab Number field | Done | See `git log`: "Chromia change 5 (17 Nov round)" |
+| 6 | Downloads: "All" in Complete Production's Period and By Slab Status's Range | Done | See `git log`: "Chromia change 6 (17 Nov round)" |
 
 Each change below has the same headings:
 
@@ -403,3 +404,53 @@ None.
 #### Main ERP notes
 
 Port the three files and the test. No schema change.
+
+---
+
+### Change #6: Downloads — "All" in Complete Production's Period and By Slab Status's Range
+
+#### Requirement (as given)
+
+> in the downloads section/page --> subsection (1): Complete production , in period field add one more dropdown: ALL similarly in the (2)By Slab Status subsection--> range field and when we select the All option then all records from the starting to till yet should display as a result and can be downloadable
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Placement:** All is the first choice in both lists. The page still opens on Today, as before.
+- **What All covers:** every record from the first on file up to today, by the same date each report already uses: Production Date for Complete Production, Stock and Trimming; the dispatch, approved or sample-cutting date for those; and so on.
+- **Same rows on page and in file:** the preview and the Excel file show the same rows, as with every other period.
+- **Labels:** the preview reads "All records to 17 Nov 2026", and the file is named `chromia-production_all_to_2026-11-17.xlsx` (or `chromia-dispatch_all_to_…`, and so on).
+
+#### Implemented
+
+- `src/lib/chromia/exports.ts`, which both pickers already share:
+  - `ALL` in `RANGE_PRESETS` with the label "All";
+  - `ALL_RECORDS_FROM` (2000-01-01, before any record this module holds) and `isAllRange`;
+  - `resolveRange` maps All to that day through today;
+  - the two file names say "all".
+- `src/app/chromia/downloads/page.tsx`: the preview's period reads "All records to …".
+- Tests: `tests/chromia/exports.test.ts`, 3 new.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **Checks:** typecheck clean; Vitest 585 and node tests 75 pass; the production build compiles.
+- **In the browser, on the test database:**
+  - Both lists offer All first; the default is still Today (0 slabs).
+  - Choosing All in Complete Production and pressing Apply showed "All records to 17 Nov 2026 · 8 slabs", every slab on file. Download Excel became `…/production?preset=ALL`.
+  - By Slab Status with All, for each report, gave the same counts as a custom range from 2020 to today:
+
+    | Stock | Dispatched | Approved | Sample Cutting | Recalibration | Trimming |
+    |---|---|---|---|---|---|
+    | 2 | 3 | 1 | 2 | 1 | 0 |
+
+  - Both downloads returned the Excel file: `chromia-production_all_to_2026-11-17.xlsx` and `chromia-dispatch_all_to_2026-11-17.xlsx`.
+- **Not verified:**
+  - **The Excel files:** they were checked by status, name and size, not opened.
+  - **Pacific-ERP:** nothing has been run there.
+
+#### Main ERP notes
+
+Port `exports.ts`, the page and the tests. No schema change. On a production-sized database All reads every slab, which is the same query as a wide custom range; if it is ever slow, that is where to look.

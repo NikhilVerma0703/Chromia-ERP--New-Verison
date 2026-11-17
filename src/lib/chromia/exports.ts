@@ -49,10 +49,12 @@ export const EXPORT_KIND_LABELS: Record<ExportKind, string> = {
   TRIMMING: 'Trimming Slabs',
 };
 
-export const RANGE_PRESETS = ['TODAY', 'LAST_WEEK', 'LAST_MONTH', 'MONTH', 'CUSTOM'] as const;
+/** All (17 Nov 2026): every record, from the first on file to today. */
+export const RANGE_PRESETS = ['ALL', 'TODAY', 'LAST_WEEK', 'LAST_MONTH', 'MONTH', 'CUSTOM'] as const;
 export type RangePreset = (typeof RANGE_PRESETS)[number];
 
 export const RANGE_PRESET_LABELS: Record<RangePreset, string> = {
+  ALL: 'All',
   TODAY: 'Today',
   LAST_WEEK: 'Last week (7 days)',
   LAST_MONTH: 'Last month (30 days)',
@@ -85,6 +87,18 @@ export function isRangePreset(value: string): value is RangePreset {
   return (RANGE_PRESETS as readonly string[]).includes(value);
 }
 
+/**
+ * Where All starts: a day before any record this module holds — the line's
+ * registers, imported ones included, begin decades later — so All is every
+ * record up to today, whatever the earliest one is.
+ */
+export const ALL_RECORDS_FROM = '2000-01-01';
+
+/** Is this the All range? */
+export function isAllRange(range: DateRange): boolean {
+  return rangeDays(range).from === ALL_RECORDS_FROM;
+}
+
 /** `yyyy-mm-dd` of an instant's plant calendar day — never the server's. */
 export function toDateInput(date: Date): string {
   return toPlantDateInput(date);
@@ -112,6 +126,9 @@ export function resolveRange(query: RangeQuery, now: Date = new Date()): DateRan
   const today = plantToday(now);
 
   switch (query.preset) {
+    case 'ALL':
+      return plantDayRange(ALL_RECORDS_FROM, today);
+
     case 'TODAY':
       return plantDayRange(today, today);
 
@@ -161,11 +178,11 @@ export function recentMonths(count = 24, now: Date = new Date()): MonthOption[] 
   });
 }
 
-/** `chromia-dispatch_2026-07-01_to_2026-07-31.xlsx` */
+/** `chromia-dispatch_2026-07-01_to_2026-07-31.xlsx`, or `chromia-dispatch_all_to_2026-11-17.xlsx` for All. */
 export function exportFileName(kind: ExportKind, range: DateRange): string {
   const slug = kind.toLowerCase().replace(/_/g, '-');
   const days = rangeDays(range);
-  return `chromia-${slug}_${days.from}_to_${days.to}.xlsx`;
+  return `chromia-${slug}_${isAllRange(range) ? 'all' : days.from}_to_${days.to}.xlsx`;
 }
 
 /** Read an export query out of raw search params, falling back to sane defaults. */
@@ -296,10 +313,10 @@ export function buildRangeQuery(query: RangeQuery): string {
   return params.toString();
 }
 
-/** `chromia-production_2026-05-01_to_2026-05-31.xlsx` */
+/** `chromia-production_2026-05-01_to_2026-05-31.xlsx`, or `chromia-production_all_to_2026-11-17.xlsx` for All. */
 export function productionFileName(range: DateRange): string {
   const days = rangeDays(range);
-  return `chromia-production_${days.from}_to_${days.to}.xlsx`;
+  return `chromia-production_${isAllRange(range) ? 'all' : days.from}_to_${days.to}.xlsx`;
 }
 
 /**

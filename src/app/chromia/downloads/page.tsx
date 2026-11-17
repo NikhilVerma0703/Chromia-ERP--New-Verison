@@ -12,6 +12,7 @@ import {
   parseRangeQuery,
   recentMonths,
   resolveRange,
+  isAllRange,
 } from '@/lib/chromia/exports';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { loadDownloadReport } from '@/lib/chromia/server/repositories/export-repository';
@@ -108,7 +109,8 @@ export default async function DownloadsPage({
   const downloadHref = `${API_ROUTES.exports}?${buildExportQuery(query)}`;
   const productionHref = `${API_ROUTES.exports}/production?${buildRangeQuery(productionQuery)}`;
   const months = recentMonths();
-  const period = (r: { from: Date; to: Date }) => `${dateFmt.format(r.from)} – ${dateFmt.format(r.to)}`;
+  const period = (r: { from: Date; to: Date }) =>
+    isAllRange(r) ? `All records to ${dateFmt.format(r.to)}` : `${dateFmt.format(r.from)} – ${dateFmt.format(r.to)}`;
 
   return (
     <>

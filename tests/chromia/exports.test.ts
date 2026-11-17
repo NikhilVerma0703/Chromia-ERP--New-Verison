@@ -291,3 +291,38 @@ describe('plant-day filtering', () => {
     expect(isWithinRangeDays(null, may)).toBe(false);
   });
 });
+
+describe('All (17 Nov 2026, change 6)', () => {
+  it('is offered first in both Downloads pickers, which share the list', async () => {
+    const { RANGE_PRESETS, RANGE_PRESET_LABELS } = await import('@/lib/chromia/exports');
+    expect(RANGE_PRESETS[0]).toBe('ALL');
+    expect(RANGE_PRESET_LABELS.ALL).toBe('All');
+    const { readFileSync } = await import('node:fs');
+    for (const file of ['production-form.tsx', 'download-form.tsx']) {
+      const src = readFileSync(new URL(`../../src/app/chromia/downloads/${file}`, import.meta.url), 'utf8');
+      expect(src, file).toMatch(/RANGE_PRESETS\.map/);
+    }
+  });
+
+  it('covers every record from the first on file to today, and nothing later', async () => {
+    const { ALL_RECORDS_FROM, isAllRange } = await import('@/lib/chromia/exports');
+    const range = resolveRange(query({ preset: 'ALL' }), NOW);
+    expect(toDateInput(range.from)).toBe(ALL_RECORDS_FROM);
+    expect(toDateInput(range.to)).toBe('2026-08-14');
+    expect(isAllRange(range)).toBe(true);
+    expect(isAllRange(resolveRange(query({ preset: 'LAST_MONTH' }), NOW))).toBe(false);
+    // An old record and today's are both in; tomorrow's is not.
+    expect(isWithinRangeDays(plantInstant(2024, 1, 5, 10, 0), range)).toBe(true);
+    expect(isWithinRangeDays(plantInstant(2026, 8, 14, 12, 0), range)).toBe(true);
+    expect(isWithinRangeDays(plantInstant(2026, 8, 15, 12, 0), range)).toBe(false);
+  });
+
+  it('is read from either picker’s link, and names its file "all"', () => {
+    expect(parseExportQuery({ kind: 'STOCK', preset: 'ALL' }, NOW).preset).toBe('ALL');
+    expect(parseRangeQuery({ pPreset: 'ALL' }, 'p', NOW).preset).toBe('ALL');
+    expect(buildRangeQuery({ preset: 'ALL', month: '2026-08', from: 'x', to: 'y' })).toBe('preset=ALL');
+    const range = resolveRange(query({ preset: 'ALL' }), NOW);
+    expect(exportFileName('STOCK', range)).toBe('chromia-stock_all_to_2026-08-14.xlsx');
+    expect(productionFileName(range)).toBe('chromia-production_all_to_2026-08-14.xlsx');
+  });
+});
