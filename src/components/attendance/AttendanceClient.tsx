@@ -35,7 +35,7 @@ import {
 } from "@/components/commercial/invoices/ui";
 import {
   INCOMPLETE_PREVIOUS_DAY, LEAVE_TYPES, LEAVE_TYPE_HUES, LEAVE_TYPE_LABELS, LINES, LINE_LABELS,
-  SUM_OF_HOURS_LABEL, dayKind, laterThanNowError, leaveTypeHue, linesLabel, outDate, overnightShiftOpen, parseLines, shiftLengthError, workedLabel,
+  SUM_OF_HOURS_LABEL, dayKind, laterThanNowError, leaveTypeHue, linesLabel, outDate, outDaysOf, overnightShiftOpen, parseLines, shiftDate, shiftLengthError, workedLabel,
   type LineCode,
 } from "@/lib/attendance/attendance";
 import { IN_TIME_GRACE_MINUTES, earliestInTime, inTimeErrorOn, inTimeUnchanged } from "@/lib/attendance/clock";
@@ -134,8 +134,10 @@ interface LeaveRow {
 }
 
 /** A draft of one attendance row, while it is being edited. */
-interface Draft { lines: LineCode[]; inTime: string; outTime: string }
-const NO_DRAFT: Draft = { lines: [], inTime: "", outTime: "" };
+/** `outDate` is the Plant In-Charge's Out date (17 Nov 2026): "" reads it
+ *  from the times, as before — the same date, or the next morning. */
+interface Draft { lines: LineCode[]; inTime: string; outTime: string; outDate: string }
+const NO_DRAFT: Draft = { lines: [], inTime: "", outTime: "", outDate: "" };
 
 /** Said in place of a register's rows when they could not be read — never the
  *  empty-register sentence, which would invite an entry that fails the same
@@ -291,7 +293,11 @@ export function AttendanceClient({ api, rights }: {
        left exactly as it was. */
     const clock = nowPlant();
     setNow(clock);
-    setDraft({ lines: parseLines(r.lines), inTime: r.inTime || clock, outTime: r.outTime });
+    /* A recorded Out date the times would not give (a shift of a day or
+       more) is shown in its box; any other is left to be read from the times,
+       so changing the Out-Time moves it as it always did. */
+    const recorded = r.outDate && r.outDate !== outDate(date, r.inTime, r.outTime) ? r.outDate : "";
+    setDraft({ lines: parseLines(r.lines), inTime: r.inTime || clock, outTime: r.outTime, outDate: recorded });
     setRowError(null);
   };
 
@@ -314,7 +320,7 @@ export function AttendanceClient({ api, rights }: {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(night
-          ? { date: night.date, operatorId: r.operatorId, shiftNo: night.shiftNo, lines: parseLines(night.lines), inTime: night.inTime, outTime: draft.outTime }
+          ? { date: night.date, operatorId: r.operatorId, shiftNo: night.shiftNo, lines: parseLines(night.lines), inTime: night.inTime, outTime: draft.outTime, outDate: date }
           : { date, operatorId: r.operatorId, shiftNo: r.shiftNo, ...draft }),
       });
       if (night) {
@@ -363,7 +369,7 @@ export function AttendanceClient({ api, rights }: {
     if (!r.overnight) return;
     setEditing(nightKey(r));
     setNow(nowPlant());
-    setDraft({ lines: parseLines(r.overnight.lines), inTime: r.overnight.inTime, outTime: "" });
+    setDraft({ lines: parseLines(r.overnight.lines), inTime: r.overnight.inTime, outTime: "", outDate: date });
     setRowError(null);
   };
 
@@ -424,10 +430,6 @@ export function AttendanceClient({ api, rights }: {
     }
   };
 
-  /* Worked hours as the operator types the Out — the same figure the server
-     will store, from the same function, so the row never changes on save. */
-  const draftWorked = useMemo(() => workedLabel(draft.inTime, draft.outTime), [draft.inTime, draft.outTime]);
-
   /* Why the drafted In-Time cannot be used, or null. The SAME function the
      server will use, and on the same terms:
        • empty is not an error — a row may be saved for its Line alone;
@@ -438,6 +440,15 @@ export function AttendanceClient({ api, rights }: {
   const editingRow = editing ? rows.find((r) => rowKey(r) === editing) : undefined;
   /** Last night's shift, when its Out-Time is what is open (nightKey). */
   const editingNight = editing ? (rows.find((r) => nightKey(r) === editing)?.overnight ?? null) : null;
+  /* The date the drafted Out falls on, and how many dates after the shift's
+     own (17 Nov 2026): last night's Out is on this register's date; another
+     is the In-Charge's Out date, or read from the times. */
+  const draftShiftDate = editingNight ? editingNight.date : date;
+  const draftOutDay = draft.outTime.trim() ? (draft.outDate || outDate(draftShiftDate, draft.inTime, draft.outTime)) : "";
+  const draftOutDays = draftOutDay ? outDaysOf(draftShiftDate, draftOutDay) : undefined;
+  /* Worked hours as the operator types the Out — the same figure the server
+     will store, from the same function, so the row never changes on save. */
+  const draftWorked = useMemo(() => workedLabel(draft.inTime, draft.outTime, draftOutDays), [draft.inTime, draft.outTime, draftOutDays]);
   const originalIn = editingNight ? editingNight.inTime : (editingRow?.inTime ?? "");
   const originalOut = editingNight ? "" : (editingRow?.outTime ?? "");
   /* The clock rules are for marking attendance AS IT HAPPENS — the tablet, on
@@ -463,13 +474,21 @@ export function AttendanceClient({ api, rights }: {
          the shift ended), so on today it may not be later than now. */
       if (editingNight) {
         if (!draft.outTime.trim()) return null;
-        return shiftLengthError(draft.inTime, draft.outTime) ?? (isToday ? laterThanNowError(draft.outTime, now) : null);
+        return shiftLengthError(draft.inTime, draft.outTime, draftOutDays) ?? (isToday ? laterThanNowError(draft.outTime, now) : null);
       }
-      return isToday && !clockRules && draft.outTime.trim()
-        && (draft.outTime.trim() !== originalOut.trim() || !inTimeUnchanged(draft.inTime, originalIn))
-        ? laterThanNowError(draft.outTime, now, draft.inTime) : null;
+      if (clockRules || !draft.outTime.trim()) return null;
+      /* A typed Out, as the server judges it: after the In, on or after the
+         shift's own date, and never later than now. */
+      const plantToday = todayStr();
+      if (draftOutDay && draftOutDay < date) return "The Out date cannot be before the shift's own date.";
+      if (draftOutDay > plantToday) return `It cannot be later than now (${now}).`;
+      const length = shiftLengthError(draft.inTime, draft.outTime, draftOutDays);
+      if (length) return length;
+      return draftOutDay === plantToday
+        && (draft.outTime.trim() !== originalOut.trim() || !inTimeUnchanged(draft.inTime, originalIn) || Boolean(draft.outDate))
+        ? laterThanNowError(draft.outTime, now) : null;
     },
-    [draft.outTime, draft.inTime, originalOut, originalIn, now, isToday, clockRules, editingNight],
+    [draft.outTime, draft.inTime, draft.outDate, draftOutDay, draftOutDays, date, originalOut, originalIn, now, clockRules, editingNight],
   );
 
   return (
@@ -560,7 +579,7 @@ function DailyAttendance(props: {
   const manyShifts = (operatorId: string) => rows.some((o) => o.operatorId === operatorId && o.shiftNo > 1);
   /** The date the drafted Out-Time belongs to, when it is not this one. */
   const draftOutDate = (() => {
-    const d = outDate(date, draft.inTime, draft.outTime);
+    const d = draft.outTime.trim() ? (draft.outDate || outDate(date, draft.inTime, draft.outTime)) : "";
     return d && d !== date ? d : "";
   })();
   const [managing, setManaging] = useState(false);
@@ -776,10 +795,23 @@ function DailyAttendance(props: {
                             <>
                               <TimeInput value={draft.outTime} onChange={(v) => props.setDraft((d) => ({ ...d, outTime: v }))}
                                 className={`${inp} w-24 ${outError ? "border-red-400 focus:border-red-400 focus:ring-red-100" : ""}`} />
+                              {/* Out date (17 Nov 2026): only for a shift that ran
+                                  on past the next morning — left empty, the date is
+                                  read from the times, as before. */}
+                              <label className="mt-1 block text-xs text-gray-500">
+                                Out date
+                                <input type="date" value={draft.outDate} min={date} max={todayStr()}
+                                  onChange={(e) => props.setDraft((d) => ({ ...d, outDate: e.target.value }))}
+                                  aria-label="Out date" className={`${inp} mt-0.5 w-36 py-1 text-xs`} />
+                              </label>
                               {outError && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{outError}</p>}
                             </>
                           )}
-                          {draftOutDate && <p className="mt-1 text-xs font-medium text-amber-700">{dmy(draftOutDate)} (next day)</p>}
+                          {draftOutDate && (
+                            <p className="mt-1 text-xs font-medium text-amber-700">
+                              {dmy(draftOutDate)}{draftOutDate === shiftDate(date, 1) ? " (next day)" : ""}
+                            </p>
+                          )}
                         </div>
                       ) : r.outTime ? (
                         <span className="whitespace-nowrap">

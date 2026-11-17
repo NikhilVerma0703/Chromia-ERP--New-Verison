@@ -22,6 +22,7 @@
     "db:seed:attendance": "cross-env TZ=UTC tsx --env-file=.env prisma/seed-attendance.ts",
     "audit:chromia": "cross-env TZ=UTC tsx --env-file=.env scripts/chromia-audit.ts",
     "test:workflows": "cross-env TZ=UTC tsx --env-file=.env --require ./scripts/workflow/stub-next.cjs scripts/workflow/chromia-workflows.ts",
+    "test:attendance": "cross-env TZ=UTC tsx --env-file=.env --require ./scripts/workflow/stub-next.cjs --require ./scripts/workflow/attendance-stub.cjs scripts/workflow/attendance-check.ts",
     "db:studio": "prisma studio",
     "test:node": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/*.test.ts"
   },

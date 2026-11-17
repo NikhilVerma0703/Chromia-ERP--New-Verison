@@ -60,7 +60,6 @@ import { isValidTime } from "@/lib/robo/time";
 import { INVALID_TIME, inTimeErrorOn, inTimeUnchanged, outTimeToStoreOn } from "./clock.ts";
 import {
   INCOMPLETE_PREVIOUS_DAY,
-  SHIFT_TOO_LONG,
   amendsSavedRow,
   anotherShiftError,
   canStartAnotherShift,
@@ -80,7 +79,7 @@ import {
   linesLabel,
   operatorNameError,
   outDate,
-  overnightShiftOpen,
+  outDaysOf,
   parseLeaveType,
   previousDay,
   SUM_OF_HOURS_LABEL,
@@ -149,7 +148,7 @@ async function nextSortOrder(tx: Tx): Promise<number> {
 /* ── The day's register ────────────────────────────────────────────── */
 
 /** A shift row as the register screen and its rules read it. */
-interface StoredShift { shiftNo: number; lines: string; inTime: string | null; outTime: string | null }
+interface StoredShift { shiftNo: number; lines: string; inTime: string | null; outTime: string | null; outDate: string | null }
 
 /**
  * Every active operator for a date, each with their shifts on it — one line per
@@ -179,7 +178,7 @@ async function dayRegister(date: string) {
       const overnight = state.kind === "overnight"
         ? { date: prev, shiftNo: state.row.shiftNo, lines: state.row.lines, inTime: state.row.inTime ?? "" }
         : null;
-      const anotherShift = canStartAnotherShift(shifts);
+      const anotherShift = canStartAnotherShift(shifts, date);
       const line = (d: (typeof days)[number] | undefined, shiftNo: number, last: boolean) => ({
         operatorId: o.id,
         operatorName: o.name,
@@ -193,8 +192,8 @@ async function dayRegister(date: string) {
         /* A shift that went in at 22:00 and came out at 06:00 is ONE row, on
            the day it started; the Out is the next date and the screen says so
            rather than printing a 06:00 that reads as eight hours earlier. */
-        outDate: outDate(date, d?.inTime, d?.outTime),
-        worked: workedLabel(d?.inTime, d?.outTime),
+        outDate: outDate(date, d?.inTime, d?.outTime, d?.outDate),
+        worked: workedLabel(d?.inTime, d?.outTime, outDaysOf(date, d?.outDate)),
         saved: Boolean(d),
         blocked,
         blockedDate: blocked ? prev : "",
@@ -230,7 +229,7 @@ async function previousDayStates(date: string): Promise<Map<string, PreviousDayS
   const [rows, leaves] = await Promise.all([
     prisma.attendanceDay.findMany({
       where: { date: prev },
-      select: { operatorId: true, shiftNo: true, lines: true, inTime: true, outTime: true },
+      select: { operatorId: true, shiftNo: true, lines: true, inTime: true, outTime: true, outDate: true },
     }),
     prisma.attendanceLeave.findMany({ where: { date: prev }, select: { operatorId: true } }),
   ]);
@@ -355,9 +354,22 @@ async function filteredRows(f: AttendanceFilter, today: string) {
       "Operator Name": r.operator?.name ?? "",
       "Line": linesLabel(r.lines),
       "In-Time": r.inTime ?? "-",
-      "Out-Time": r.outTime ?? "-",
-      "Total Working Hours": workedLabel(r.inTime, r.outTime),
+      "Out-Time": outTimeCell(r),
+      "Total Working Hours": workedLabel(r.inTime, r.outTime, outDaysOf(r.date, r.outDate)),
     }) as Record<string, string | number>);
+}
+
+/**
+ * The Out-Time as Downloads prints it. Exactly as before for a shift whose Out
+ * the times already place (the same date, or the next morning); with its
+ * date beside it when they cannot (17 Nov 2026) — a shift of a day or more,
+ * "19:00 (19/11/2026)", so the sheet does not read as eleven hours.
+ */
+function outTimeCell(r: { date: string; inTime: string | null; outTime: string | null; outDate: string | null }): string {
+  if (!r.outTime) return "-";
+  const ended = outDate(r.date, r.inTime, r.outTime, r.outDate);
+  if (ended === outDate(r.date, r.inTime, r.outTime)) return r.outTime;
+  return `${r.outTime} (${ended.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")})`;
 }
 
 /**
@@ -369,7 +381,7 @@ async function filteredRows(f: AttendanceFilter, today: string) {
  */
 async function sumOfHours(f: AttendanceFilter, today: string): Promise<string | null> {
   if (f.type !== "ATTENDANCE" || !f.operatorId) return null;
-  const rows = await prisma.attendanceDay.findMany({ where: filterWhere(f, today), select: { inTime: true, outTime: true } });
+  const rows = await prisma.attendanceDay.findMany({ where: filterWhere(f, today), select: { date: true, inTime: true, outTime: true, outDate: true } });
   return minutesLabel(sumWorkedMinutes(rows));
 }
 
@@ -549,7 +561,7 @@ async function route(req: Request, segments: string[], method: string, rights: P
       return json({ date, rows: await dayRegister(date) });
     }
     if (method === "PUT") {
-      const b = body as { date?: unknown; operatorId?: unknown; shiftNo?: unknown; lines?: unknown; inTime?: unknown; outTime?: unknown };
+      const b = body as { date?: unknown; operatorId?: unknown; shiftNo?: unknown; lines?: unknown; inTime?: unknown; outTime?: unknown; outDate?: unknown };
       if (!isDate(b.date)) return bad("Pick a date.");
       const operatorId = String(b.operatorId ?? "");
       if (!operatorId) return bad("Pick an operator.");
@@ -571,13 +583,13 @@ async function route(req: Request, segments: string[], method: string, rights: P
       const today = todayPlant();
       const existing = await prisma.attendanceDay.findUnique({
         where: { date_operatorId_shiftNo: { date, operatorId, shiftNo } },
-        select: { lines: true, inTime: true, outTime: true },
+        select: { lines: true, inTime: true, outTime: true, outDate: true },
       });
       /* The operator's other shifts on this date, and the previous date's —
          what a new shift has to follow, and what no shift may overlap. */
       const [dayShifts, previousShifts] = await Promise.all([
-        prisma.attendanceDay.findMany({ where: { date, operatorId }, select: { shiftNo: true, lines: true, inTime: true, outTime: true } }),
-        prisma.attendanceDay.findMany({ where: { date: previousDay(date), operatorId }, select: { shiftNo: true, lines: true, inTime: true, outTime: true } }),
+        prisma.attendanceDay.findMany({ where: { date, operatorId }, select: { shiftNo: true, lines: true, inTime: true, outTime: true, outDate: true } }),
+        prisma.attendanceDay.findMany({ where: { date: previousDay(date), operatorId }, select: { shiftNo: true, lines: true, inTime: true, outTime: true, outDate: true } }),
       ]);
       const otherShifts = dayShifts.filter((s) => s.shiftNo !== shiftNo);
       /* LAST NIGHT'S OUT-TIME. The night shift marks in at 22:00 and out at
@@ -603,9 +615,9 @@ async function route(req: Request, segments: string[], method: string, rights: P
          browser's, for the reason the clock rules are: a page can be edited
          and a request can be made without one. */
       if (!closesLastNight && !rights.anyDate && date !== today) return bad(ONLY_TODAY, 403);
-      // A day shift nobody marked out of is not the night shift: stamping
-      // this morning's clock on it would be a false Out.
-      if (closesLastNight && !overnightShiftOpen(existing?.inTime, nowPlant)) return bad(SHIFT_TOO_LONG);
+      /* However long last night's shift has run, it is still that shift (owner,
+         17 Nov 2026: any In-Time, and no longest shift): its Out is stamped
+         below, dated today. */
       const kind = dayKind(date, today);
       // A day that has not happened cannot be attended. This is the only case
       // the past-day correction path below would otherwise let through.
@@ -654,31 +666,41 @@ async function route(req: Request, segments: string[], method: string, rights: P
       // unless it is the one already stored. Typed by the Plant In-Charge, and
       // on a past day, because no reading of the clock would be right for a
       // day that has already ended.
-      const outTime = outTimeToStoreOn(clockRules || closesLastNight, b.outTime as string, existing?.outTime, nowPlant);
-      /* The In-Charge's Out on today is judged against the In it will be
-         stored WITH, whichever of the two changed: moving the In past an Out
-         already there makes that Out tomorrow's, which has not happened yet
-         (clock.ts — an Out-Time is never later than the moment it was
-         recorded). */
-      if (correctsToday && outTime && (inTimeChanged || outTime !== (existing?.outTime ?? null))) {
-        const refused = laterThanNowError(outTime, nowPlant, inTime);
-        if (refused) return bad(refused);
-      }
+      const stamped = clockRules || closesLastNight;
+      const outTime = outTimeToStoreOn(stamped, b.outTime as string, existing?.outTime, nowPlant);
       const outChanged = outTime !== (existing?.outTime ?? null);
-      /* LAST NIGHT'S OUT, TYPED BY THE PLANT IN-CHARGE (7 Nov 2026). On
-         yesterday's row an Out that ran past midnight is TODAY's time, so it
-         may not be later than now — the same guarantee as everywhere else. */
-      if (rights.amendSaved && kind === "past" && outTime && outChanged && outDate(date, inTime, outTime) === today) {
-        const refused = laterThanNowError(outTime, nowPlant);
-        if (refused) return bad(refused);
+      /* THE DATE THE OUT FELL ON (17 Nov 2026). A shift may run on for a day
+         or more, which the two times cannot say, so it is recorded with the
+         Out: a stamped Out is today's; a typed one is the date sent with it
+         (the Plant In-Charge's Out date), or else read from the times as
+         before — the same date, or the next when the Out is before the In. */
+      const sentOutDate = isDate(b.outDate) ? (b.outDate as string) : null;
+      const outDay = !outTime ? null
+        : stamped ? (outChanged ? today : (existing?.outDate ?? null))
+        : sentOutDate ?? (outChanged || inTimeChanged ? outDate(date, inTime, outTime) : (existing?.outDate ?? null));
+      const outDayChanged = outDay !== (existing?.outDate ?? null);
+      /* A TYPED Out is never later than the moment it was recorded (clock.ts):
+         not before the shift's own date, not on a date still to come, and on
+         today not past now. Judged against the In it will be stored WITH,
+         whichever changed — moving the In past an Out already there makes
+         that Out the next date's. */
+      if (!stamped && outTime && (inTimeChanged || outChanged || outDayChanged)) {
+        const ended = outDate(date, inTime, outTime, outDay);
+        if (ended < date) return bad(`${INVALID_TIME} The Out date cannot be before the shift's own date.`);
+        if (ended > today) return bad(`${INVALID_TIME} It cannot be later than now (${nowPlant}).`);
+        if (ended === today) {
+          const refused = laterThanNowError(outTime, nowPlant);
+          if (refused) return bad(refused);
+        }
       }
-      /* One shift is at most MAX_SHIFT_MINUTES and never of no length; and
-         no shift may overlap another of the same operator (7 Nov 2026).
-         Asked only of a time being entered or changed, so an old row saved
-         for its Line alone is never refused for what it already holds. */
-      if (inTimeChanged || outChanged) {
-        const refused = shiftLengthError(inTime, outTime)
-          ?? shiftOverlapError({ date, shift: { shiftNo, inTime, outTime }, previousDayRows: previousShifts, dayRows: otherShifts });
+      /* One shift is never of no length — however long it is (no longest
+         shift since 17 Nov 2026); and no shift may overlap another of the
+         same operator (7 Nov 2026). Asked only of a time being entered or
+         changed, so an old row saved for its Line alone is never refused for
+         what it already holds. */
+      if (inTimeChanged || outChanged || outDayChanged) {
+        const refused = shiftLengthError(inTime, outTime, outDaysOf(date, outDay))
+          ?? shiftOverlapError({ date, shift: { shiftNo, inTime, outTime, outDate: outDay }, previousDayRows: previousShifts, dayRows: otherShifts });
         if (refused) return bad(refused);
       }
 
@@ -700,8 +722,8 @@ async function route(req: Request, segments: string[], method: string, rights: P
            that the second save corrects rather than a second row. */
         const saved = await tx.attendanceDay.upsert({
           where: { date_operatorId_shiftNo: { date, operatorId, shiftNo } },
-          create: { date, operatorId, shiftNo, lines, inTime, outTime },
-          update: { lines, inTime, outTime },
+          create: { date, operatorId, shiftNo, lines, inTime, outTime, outDate: outDay },
+          update: { lines, inTime, outTime, outDate: outDay },
           include: { operator: { select: { name: true } } },
         });
         const was = before ? ` (was ${dayWords(before)})` : "";
@@ -710,8 +732,8 @@ async function route(req: Request, segments: string[], method: string, rights: P
           `Attendance: ${saved.operator?.name ?? "an operator"} on ${onDay(date)}${shift} — ${dayWords(saved)}${was}`,
           {
             action: before ? "attendance.day.edit" : "attendance.day.add",
-            before: before ? { id: before.id, date, operatorId, shiftNo, lines: before.lines, inTime: before.inTime, outTime: before.outTime } : null,
-            after: { id: saved.id, date, operatorId, shiftNo, lines: saved.lines, inTime: saved.inTime, outTime: saved.outTime },
+            before: before ? { id: before.id, date, operatorId, shiftNo, lines: before.lines, inTime: before.inTime, outTime: before.outTime, outDate: before.outDate } : null,
+            after: { id: saved.id, date, operatorId, shiftNo, lines: saved.lines, inTime: saved.inTime, outTime: saved.outTime, outDate: saved.outDate },
           });
         return saved;
       });
@@ -722,8 +744,8 @@ async function route(req: Request, segments: string[], method: string, rights: P
         linesLabel: linesLabel(row.lines),
         inTime: row.inTime ?? "",
         outTime: row.outTime ?? "",
-        outDate: outDate(date, row.inTime, row.outTime),
-        worked: workedLabel(row.inTime, row.outTime),
+        outDate: outDate(date, row.inTime, row.outTime, row.outDate),
+        worked: workedLabel(row.inTime, row.outTime, outDaysOf(date, row.outDate)),
         saved: true,
       });
     }

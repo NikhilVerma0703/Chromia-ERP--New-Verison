@@ -7,6 +7,8 @@ import {
   sumWorkedMinutes,
   anotherShiftError,
   canStartAnotherShift,
+  laterThanNowError,
+  outDaysOf,
   nightShiftStillOpen,
   outDate,
   overnightAwaitingOut,
@@ -51,24 +53,110 @@ describe('a night shift: In 18:00 on the 7th, Out 06:00 on the 8th', () => {
     expect(previousDayState([open], false, { isToday: true, now: '06:00' })).toEqual({ kind: 'overnight', row: open });
   });
 
-  it('is genuinely incomplete once it could not still be running (more than 16 hours)', () => {
+  it('is still the shift running however long it has been — there is no longest shift (17 Nov 2026)', () => {
     const open = { shiftNo: 1, inTime: '18:00', outTime: null };
-    expect(overnightAwaitingOut(open, { isToday: true, now: '10:30' })).toBe(false);
-    expect(previousDayState([open], false, { isToday: true, now: '10:30' }).kind).toBe('incomplete');
+    expect(overnightAwaitingOut(open, { isToday: true, now: '10:30' })).toBe(true);
+    expect(previousDayState([open], false, { isToday: true, now: '10:30' })).toEqual({ kind: 'overnight', row: open });
   });
 
   it('read for an earlier date, an open evening shift is the night shift awaiting the Out that was missed', () => {
     expect(overnightAwaitingOut({ inTime: '22:00', outTime: '' }, { isToday: false, now: '15:00' })).toBe(true);
   });
 
-  it('only an evening In (from 18:00) can be a night shift', () => {
-    const day = { shiftNo: 1, inTime: '14:00', outTime: null };
-    expect(overnightAwaitingOut(day, { isToday: true, now: '02:00' })).toBe(false);
-    expect(previousDayState([day], false, { isToday: true, now: '02:00' }).kind).toBe('incomplete');
+  it('any In-Time, early or late, left open is the shift still running — marked out from the next date', () => {
+    const day = { shiftNo: 1, inTime: '06:00', outTime: null };
+    expect(overnightAwaitingOut(day, { isToday: true, now: '07:00' })).toBe(true); // 25 hours on
+    expect(overnightAwaitingOut({ inTime: '07:30', outTime: '' }, { isToday: false, now: '15:00' })).toBe(true);
   });
 
   it('a new shift waits until it is marked out, with a sentence saying so', () => {
     expect(nightShiftStillOpen(SAT)).toBe('The night shift from 07/11/2026 has no Out-Time yet. Mark it out first.');
+  });
+});
+
+describe('an In-Time before 18:00, Out the next morning (17 Nov 2026)', () => {
+  const NEXT = SUN;
+
+  it.each([
+    ['16:45', '06:12', 807, '13h 27m'],
+    ['17:53', '06:12', 739, '12h 19m'],
+    ['17:56', '06:12', 736, '12h 16m'],
+  ])('In %s today, Out %s tomorrow: one shift of %i minutes (%s)', (inTime, outTime, minutes, label) => {
+    expect(workedMinutes(inTime, outTime)).toBe(minutes);
+    expect(workedLabel(inTime, outTime)).toBe(label);
+    expect(shiftLengthError(inTime, outTime)).toBeNull();
+    // Saved on the row of the day it started; its Out is the next date's.
+    expect(outDate(SAT, inTime, outTime)).toBe(NEXT);
+  });
+
+  it('is the shift still running the next morning, so it can be marked out — not incomplete', () => {
+    for (const inTime of ['16:45', '17:53', '17:56']) {
+      const open = { shiftNo: 1, inTime, outTime: null };
+      expect(overnightAwaitingOut(open, { isToday: true, now: '06:12' })).toBe(true);
+      expect(previousDayState([open], false, { isToday: true, now: '06:12' })).toEqual({ kind: 'overnight', row: open });
+    }
+    // Read for an earlier date too: it could have run past midnight.
+    expect(overnightAwaitingOut({ inTime: '16:45', outTime: '' }, { isToday: false, now: '15:00' })).toBe(true);
+  });
+
+  it('the Out recorded on the next date gives the same hours', () => {
+    expect(outDaysOf(SAT, NEXT)).toBe(1);
+    expect(workedLabel('17:56', '06:12', outDaysOf(SAT, NEXT))).toBe('12h 16m');
+    expect(outDate(SAT, '17:56', '06:12', NEXT)).toBe(NEXT);
+  });
+});
+
+describe('no longest shift: an operator may work 35 hours or more (17 Nov 2026)', () => {
+  const MON = '2026-11-09';
+
+  it('08:00 on the 7th to 19:00 on the 8th is 35 hours — the recorded Out date says which', () => {
+    expect(workedMinutes('08:00', '19:00', 1)).toBe(35 * 60);
+    expect(workedLabel('08:00', '19:00', outDaysOf(SAT, SUN))).toBe('35h');
+    expect(outDate(SAT, '08:00', '19:00', SUN)).toBe(SUN);
+    // Without a recorded date the times read as they always did: the same day, 11 hours.
+    expect(workedLabel('08:00', '19:00')).toBe('11h');
+    expect(shiftLengthError('08:00', '19:00', 1)).toBeNull();
+  });
+
+  it('more than a day, and longer than 16 hours, is a shift', () => {
+    expect(workedLabel('06:00', '07:30', 2)).toBe('49h 30m');
+    expect(shiftLengthError('18:00', '11:00')).toBeNull(); // 17 hours, the next morning
+    expect(workedLabel('14:00', '06:12')).toBe('16h 12m');
+  });
+
+  it('the Out still has to come after the In', () => {
+    expect(shiftLengthError('08:00', '08:00')).toMatch(/Out-Time must be after the In-Time/);
+    expect(shiftLengthError('08:00', '07:00', 0)).toMatch(/Out-Time must be after the In-Time/);
+    expect(workedMinutes('08:00', '07:00', 0)).toBeNull();
+  });
+
+  it('adds into the Sum of Total Working Hours by its recorded date', () => {
+    expect(minutesLabel(sumWorkedMinutes([
+      { date: SAT, inTime: '08:00', outTime: '19:00', outDate: SUN }, // 35h
+      { date: MON, inTime: '06:00', outTime: '14:00' }, // 8h, no date recorded
+    ]))).toBe('43h');
+  });
+
+  it('a shift that ended on a later date: no second shift on its own date', () => {
+    const long = [{ shiftNo: 1, inTime: '08:00', outTime: '19:00', outDate: SUN }];
+    expect(canStartAnotherShift(long, SAT)).toBe(false);
+    expect(anotherShiftError(SAT, long)).toMatch(/ran past midnight/);
+    expect(canStartAnotherShift([{ shiftNo: 1, inTime: '08:00', outTime: '19:00', outDate: SAT }], SAT)).toBe(true);
+  });
+
+  it('the next date may start only after it ended, and a date it ran through takes no shift at all', () => {
+    const sat = [{ shiftNo: 1, inTime: '08:00', outTime: '19:00', outDate: SUN }];
+    expect(shiftOverlapError({ date: SUN, shift: { shiftNo: 1, inTime: '18:00', outTime: null }, previousDayRows: sat, dayRows: [] }))
+      .toMatch(/previous shift ended at 19:00/);
+    expect(shiftOverlapError({ date: SUN, shift: { shiftNo: 1, inTime: '19:30', outTime: null }, previousDayRows: sat, dayRows: [] })).toBeNull();
+    const toMonday = [{ shiftNo: 1, inTime: '08:00', outTime: '07:30', outDate: MON }];
+    expect(shiftOverlapError({ date: SUN, shift: { shiftNo: 1, inTime: '20:00', outTime: null }, previousDayRows: toMonday, dayRows: [] }))
+      .toMatch(/ran until 07:30 on 09\/11\/2026, so no shift can start on 08\/11\/2026/);
+  });
+
+  it('a typed Out on a later date than today has not happened yet', () => {
+    expect(laterThanNowError('07:00', '10:00', '08:00', 1)).toMatch(/cannot be later than now/);
+    expect(laterThanNowError('07:00', '10:00', '08:00', 0)).toBeNull();
   });
 });
 
@@ -146,9 +234,8 @@ describe('another shift on the same date (the Sunday call-back)', () => {
 });
 
 describe('impossible pairs are refused, not stored as a shift with no hours', () => {
-  it('equal times, and more than 16 hours', () => {
+  it('equal times are no shift; an Out not yet marked is not judged', () => {
     expect(shiftLengthError('08:00', '08:00')).toMatch(/not a shift/);
-    expect(shiftLengthError('18:00', '11:00')).toMatch(/at most 16 hours/); // 17 hours
     expect(shiftLengthError('06:00', '')).toBeNull(); // not marked out yet
   });
 });

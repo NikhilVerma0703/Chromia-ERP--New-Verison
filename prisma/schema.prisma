@@ -1398,6 +1398,11 @@ model AttendanceDay {
   /// back the same day (7 Nov 2026, migration 0007). Every row written before
   /// is shift 1. LAST in the model because ADD COLUMN appends.
   shiftNo    Int                @default(1)
+  /// yyyy-mm-dd the Out-Time fell on (17 Nov 2026, migration 0010): a shift
+  /// may run on for a day or more, which the two times alone cannot say.
+  /// Null on a row saved before, read from the times (Out before In = the
+  /// next date) — see outDate in lib/attendance/attendance.ts.
+  outDate    String?
 
   @@unique([date, operatorId, shiftNo])
   @@index([date])

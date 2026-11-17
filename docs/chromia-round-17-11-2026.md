@@ -9,6 +9,7 @@ Each change is one commit on branch `chromia-round-17-11-2026`, started from
 | # | Change | State | Commit |
 |---|--------|-------|--------|
 | 1 | Orders: a standalone section for recording and tracking customer orders | Done | See `git log`: "Chromia change 1 (17 Nov round)" |
+| 2 | Attendance: Out-Time the next day for any In-Time, and shifts of any length | Done | See `git log`: "Chromia change 2 (17 Nov round)" |
 
 Each change below has the same headings:
 
@@ -115,3 +116,105 @@ Main files:
 - **Sidebar:** add the Orders row to `CHROMIA_ITEMS` and an "Orders" section in the CHROMIA login's lists in `navModel.ts`, edit `tests/fixtures/nav-sidebar.json` by hand, and keep `chromiaNavParity` in step.
 - **Access:** no rule was added. Pacific-ERP's `chromiaGate` still applies to the photo route.
 - **Tests:** port `tests/chromia/orders.test.ts`. Its "no other file reads an order" test scans `src/`, so check it against the main ERP's larger tree.
+
+---
+
+### Change #2: Attendance — Out-Time the next day for any In-Time, and no longest shift
+
+#### Requirement (as given)
+
+> **Attendance In-Time & Next-Day Out-Time Fix (Robo ERP + Chromia ERP).** Analyze the existing interconnected Attendance module used by both Robo ERP and Chromia ERP and fix the following issue.
+>
+> **Required Change: Allow Next-Day Out-Time for Any Valid In-Time.** Previously, the overnight shift issue was partially fixed, but the current logic still allows next-day Out-Time only when the operator's In-Time is after 18:00. This restriction must be removed. An operator who records In-Time before 18:00 must also be allowed to enter Out-Time on the following day. For example: In-Time: 16:45 today → Out-Time: 06:12 tomorrow should be allowed. In-Time: 17:53 today → Out-Time: 06:12 tomorrow should be allowed. In-Time: 17:56 today → Out-Time: 06:12 tomorrow should be allowed. For the last example, the system should correctly calculate the total working duration as 12h 16m.
+>
+> **Implementation Requirements.** 1. Remove the hardcoded 18:00 restriction or any equivalent condition that prevents next-day Out-Time entry. 2. Allow an operator to record Out-Time on the next calendar day regardless of whether their In-Time was before or after 18:00. 3. Calculate the total working duration accurately using the actual In-Time and Out-Time date-time values, including overnight shifts. 4. Ensure that the next-day Out-Time is saved against the correct original attendance record and date. 5. Retain all existing validation rules, including preventing invalid Out-Time entries, duplicate active attendance records, and incorrect time calculations. 6. Do not break the existing multiple-shift-per-day functionality or other previously fixed overnight attendance scenarios.
+>
+> **Important: Both ERPs Must Reflect the Change.** Attendance is interconnected/shared between Robo ERP and Chromia ERP. Implement the fix in the shared attendance logic/backend so that the updated behaviour works consistently in both applications. Do not create separate or duplicate attendance logic for the two ERPs.
+>
+> **Strict Instructions.** First inspect the existing attendance implementation, database structure, and time-validation logic. Make only the changes required for this issue. Preserve all existing UI, workflows, permissions, validations, reports, downloads, and other attendance functionalities. Do not modify unrelated modules or functionality. Test the above scenarios, including In-Time before 18:00 and Out-Time the following morning, in both Robo ERP and Chromia ERP.
+>
+> **Expected Result:** Any valid In-Time today, whether before or after 18:00, must allow the operator to record Out-Time the next day, with accurate total working hours in both ERPs.
+
+Added while it was being built (the owner, 17 Nov 2026):
+
+> not only 16 hours, keep any time in time (for example operator can work continously for 35 hours also
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Both limits are gone:** the 18:00 rule, and the 16-hour longest shift that sat beside it. A shift may be any length.
+- **The Out's date is now recorded.** The two times alone can't say how long a shift of a day or more was: 08:00 → 19:00 is 11 hours or 35. Each Out saved from now on records its date:
+  - a stamped Out (the tablet's "Mark out now") gets today's date;
+  - the Plant In-Charge's typed Out gets the date they give it, or, left empty, the date read from the times as before.
+- **Rows saved before keep reading as they did.** They have no Out date, so an Out earlier than the In still counts as the next morning.
+- **An open shift is always the shift still running.** With no longest shift, an In-Time left without an Out on the previous date is never "incomplete": the next date's register offers it to be marked out ("Night shift from …"). A new shift for that operator waits until it is marked out, as before. These still hold the next day as incomplete:
+  - an Out with no In;
+  - an earlier shift of that date left open.
+- **The tablet** can mark out last night's shift on the next date, however long it has run. A shift that ran past the next date entirely, such as Saturday 06:00 to Monday, is typed by the Plant In-Charge with its Out date. That is how the tablet's today-only rule already works.
+- **The In-Charge's editor** has a small **Out date** box under the Out-Time, on rows whose times are typed. Left empty, the date is read from the times. Filling it in is needed only for a shift that ended later than the next morning.
+- **Overlaps:**
+  - The next date's first shift may not start before a long shift ended. After 08:00 Sat → 19:00 Sun, Sunday's next In must be 19:00 or later.
+  - A date that a shift ran through entirely takes no shift of its own.
+  - Only the previous date's shifts are checked, as before.
+- **Downloads:**
+  - The Out-Time prints exactly as before for a shift ending the same day or the next morning.
+  - It gets its date beside it only when the times can't place it: `19:00 (16/11/2026)` for a 35-hour shift.
+  - Total Working Hours and the Sum of Total Working Hours count the full length.
+
+#### Implemented
+
+- **`src/lib/attendance/attendance.ts`, the shared rules both ERPs use:**
+  - `workedMinutes` and `workedLabel` take the Out's date into account, and a shift's hours have no upper limit.
+  - New `outDaysOf` and `endsAfterItsDate`; `outDate` reads a recorded Out date first.
+  - `overnightShiftOpen` and `overnightAwaitingOut` no longer have the 18:00 or 16-hour conditions. `EVENING_SHIFT_FROM`, `MAX_SHIFT_MINUTES` and `SHIFT_TOO_LONG` are gone.
+  - `shiftLengthError` refuses only an Out that isn't after the In.
+  - `canStartAnotherShift`, `shiftOverlapError` and `laterThanNowError` read the recorded Out date.
+- **`src/lib/attendance/server.ts`, the one API behind both screens:**
+  - It records the Out date with every Out.
+  - A typed Out date may not be before the shift's own date, on a date still to come, or later than now today.
+  - Hours, Downloads and the audit trail all use the Out date.
+- **`src/components/attendance/AttendanceClient.tsx`, the one register screen behind both doors:**
+  - The Out date box, and live hours that use it.
+  - Last night's Out, typed from today's register, is sent with today's date.
+
+#### Database
+
+- `prisma/migrations/0010_attendance_out_date/migration.sql` adds one nullable column, `attendance_day.outDate` (yyyy-mm-dd). No row is changed.
+- Applied to the local `chromia_erp` and to the test database.
+
+#### Verified
+
+- **Typecheck:** clean.
+- **Vitest:** 581 passed, with `tests/chromia/attendance-shifts.test.ts` rewritten for the new rules:
+  - the owner's three examples;
+  - 35 hours;
+  - 49h 30m across two dates;
+  - Out not after In;
+  - the sum;
+  - overlaps;
+  - a typed future date.
+- **Node tests:** 74 passed. Audit: all 75 checks pass. The production build compiles.
+- **New `npm run test:attendance`, 40 of 40 checks pass.** It drives the shared API on a simulated plant clock, on the test database, as the line tablet and as the Plant In-Charge:
+  - **The owner's three examples, from each login:** In 16:45 → 13h 27m, 17:53 → 12h 19m, 17:56 → 12h 16m. Each was saved on the original row and dated the next day.
+  - **35 hours:** 08:00 Sat → 19:00 Sun, marked out by the tablet and typed by the In-Charge.
+  - **49h 30m:** 06:00 Sat → 07:30 Mon.
+  - **Overlaps:** a Sunday shift before the 35h one ended is refused, and one after it is accepted.
+  - **Refused Outs:** future Out dates, an Out before the In, and equal times are refused.
+  - **Incomplete days:** an Out with no In still holds the next day.
+  - **Old rows:** a row from before reads 12h as it did.
+  - **Two shifts on one date:** still work.
+  - **Downloads:** the cells and the sum are correct.
+- **In the browser, as the In-Charge, on the test database:**
+  - **Jagadeesh's open 16:45 shift from 16 Nov** showed on 17 Nov's register as "Night shift from 16/11/2026". Under the old rule it would have been an incomplete day.
+  - **Entering Out 06:12** showed 13h 27m and saved on the 16 Nov row, dated 17 Nov.
+  - **Rajesh on 15 Nov:** In 08:00, Out 19:00 read 11h until Out date 16/11 was entered, then 35h. After saving it shows `19:00 16/11/2026 · 35h`. No console errors.
+- **Not verified:**
+  - **The Robo screen:** it isn't in the standalone. It uses the same component, API code and rules file, so the fix reaches it when ported, but it hasn't been opened.
+  - **The tablet's screen:** the standalone runs as admin, so the tablet was exercised through the API only.
+  - **Pacific-ERP:** nothing has been run there.
+
+#### Main ERP notes
+
+- **Schema:** the next numbered script adds `outDate` (nullable text), idempotent, with an action_log row and an UNDO note (drop the column; rows longer than the times can show would then read wrongly).
+- **`src/lib/attendance/reportEmail.ts`, which is not in the standalone:** it uses `nightShiftRow` and `workedLabel`. It should select `outDate` and pass it (`nightShiftRow` reads `date` and `outDate` on the row; `workedLabel(in, out, outDaysOf(date, outDate))`), or a 35-hour shift shows its hours wrong in the 07:00 and 19:00 emails.
+- **Removed exports:** `EVENING_SHIFT_FROM`, `MAX_SHIFT_MINUTES` and `SHIFT_TOO_LONG` are gone. Check Pacific-ERP for other importers, such as Robo pages and tests like `tests/attendance.test.ts` and `review1026Plant.test.ts`, and update tests pinned to the 16-hour or 18:00 rule.
+- **Testing:** check the Robo attendance screen after the port, and port `scripts/workflow/attendance-check.ts` only if the main ERP wants it, since `scripts/workflow/` stayed out last time.
