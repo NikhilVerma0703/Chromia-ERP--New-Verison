@@ -58,7 +58,7 @@ const { th, td, tdMuted, tdNum } = dataTable;
  *
  * ALTER FROM DISPATCHED (change 12, 8 Nov 2026): each row can move its slab
  * back — In Stock or Recalibration, on a date — and leaves this table as it
- * does (alterFromDispatched). Actions: Edit (the Dispatched Edit form: the
+ * does (alterFromDispatched). Action: Edit (the Dispatched Edit form: the
  * slab's details and the same move) and the global Delete.
  */
 export default async function DispatchedPage({
@@ -162,7 +162,7 @@ export default async function DispatchedPage({
                   <th className={th}>Grade</th>
                   <th className={th}>Slab Remarks</th>
                   <th className={th}>Alter From Dispatched</th>
-                  <th className={`${th} text-right`}>Actions</th>
+                  <th className={`${th} text-right`}>Action</th>
                 </tr>
               </thead>
               <tbody>

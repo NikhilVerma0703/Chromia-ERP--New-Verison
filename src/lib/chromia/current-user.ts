@@ -68,9 +68,9 @@ export async function requireActingUser(): Promise<ActingUser> {
 
 /**
  * `requireActingUser`, and an ADMIN on top — for the Chromia actions that
- * destroy or rewrite history: deleting a slab record (and everything recorded
- * against it), importing a register, deleting an import (and every slab it
- * brought in).
+ * rewrite history wholesale: importing a register, deleting an import (and
+ * every slab it brought in). Deleting one slab record was here too until
+ * 17 Nov 2026, when the owner gave it to the operators (slab-record.ts).
  *
  * ADMIN-ONLY, the owner's decision of 20 Oct 2026 on CHR-4 of that day's code
  * review. tier.ts and tests/chromiaAccess.test.ts always said only admins

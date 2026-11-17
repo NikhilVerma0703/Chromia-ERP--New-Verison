@@ -16,8 +16,8 @@ describe('Dispatched → Alter From Dispatched (change 12, 8 Nov 2026)', () => {
     expect(ALTER_DESTINATIONS.map((d) => ALTER_DESTINATION_LABELS[d])).toEqual(['In Stock', 'Recalibration']);
   });
 
-  it('sits right after Slab Remarks, before Actions, with a Select and a Date', () => {
-    expect(page).toMatch(/<th className=\{th\}>Slab Remarks<\/th>\n\s+<th className=\{th\}>Alter From Dispatched<\/th>\n\s+<th className=\{`\$\{th\} text-right`\}>Actions<\/th>/);
+  it('sits right after Slab Remarks, before Action, with a Select and a Date', () => {
+    expect(page).toMatch(/<th className=\{th\}>Slab Remarks<\/th>\n\s+<th className=\{th\}>Alter From Dispatched<\/th>\n\s+<th className=\{`\$\{th\} text-right`\}>Action<\/th>/);
     expect(row).toMatch(/name="destination"/);
     expect(row).toMatch(/name="date"\n\s+type="date"\n\s+required\n\s+min=\{dispatchedOn\}\n\s+max=\{today\}/);
     expect(row).toMatch(/alterFromDispatchedAction/);

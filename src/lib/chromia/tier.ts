@@ -30,11 +30,10 @@ export function chromiaTierOf(user: unknown): ChromiaTier | null {
   // distinction matters: OPERATOR opens every screen in this module — which
   // is the owner's "full access to all sections and subsections", and what
   // the login is for, since the shared attendance register has a door here.
-  // ADMIN is only the three destructive controls (delete a slab, import a
-  // register, delete an import), which the owner put with the admins on
-  // CHR-4 of the 20 Oct code review. Nothing in the 26 Oct instruction asks
-  // for that to be reopened, and a role that widened it on the way past
-  // would be taking a decision nobody made.
+  // ADMIN is only the import controls (import a register, delete an
+  // import), which the owner put with the admins on CHR-4 of the 20 Oct code
+  // review. Deleting a slab was the third until 17 Nov 2026, when the owner
+  // gave it to every Chromia login.
   if (role === PLANT_INCHARGE) return "OPERATOR";
   // TRANSITIONAL: logins created by the retired department-style integration
   // (branch CHROMIA, shared shop-floor ranks). They keep the module until
@@ -45,11 +44,11 @@ export function chromiaTierOf(user: unknown): ChromiaTier | null {
 }
 
 /**
- * Destructive or history-rewriting actions (delete a slab, import a register,
- * delete an import). Asked by requireChromiaAdmin (current-user.ts) in those
- * actions, and by the Slab Records and Import pages to hide their controls —
- * the owner's admin-only decision on CHR-4 of the code review of 20 Oct 2026.
- * Until then nothing called it, and every Chromia login could run them.
+ * History-rewriting actions (import a register, delete an import). Asked by
+ * requireChromiaAdmin (current-user.ts) in those actions, and by the Import
+ * page to hide its controls — the owner's admin-only decision on CHR-4 of the
+ * code review of 20 Oct 2026. Deleting a single slab record was one of them
+ * until 17 Nov 2026, when the owner opened it to the operators.
  */
 export function chromiaCanManage(user: unknown): boolean {
   return chromiaTierOf(user) === "ADMIN";

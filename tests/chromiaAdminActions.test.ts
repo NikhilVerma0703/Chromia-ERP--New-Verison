@@ -1,5 +1,7 @@
-// CHROMIA DELETE AND IMPORT ARE AN ADMIN'S — the code review of 20 Oct 2026,
-// CHR-4, and the owner's decision of the same day ("admins only").
+// CHROMIA IMPORT IS AN ADMIN'S — the code review of 20 Oct 2026, CHR-4, and
+// the owner's decision of the same day ("admins only"). Deleting one slab was
+// too, until 17 Nov 2026: the owner gave Edit and Delete on every slab table
+// to the operators, so that delete now asks only for a Chromia login.
 //
 // tier.ts and tests/chromiaAccess.test.ts always said only admins could delete
 // a slab, delete an import or import a register, through chromiaCanManage —
@@ -33,7 +35,7 @@ test("who passes: an admin; not the tablet, the manager or a branch login — al
   const branchOperator = { role: "OPERATOR", branch: "CHROMIA" };
   for (const login of [tablet, manager, branchOperator]) {
     assert.equal(chromiaTierOf(login), "OPERATOR", "still a Chromia login");
-    assert.equal(chromiaCanManage(login), false, "but not for delete or import");
+    assert.equal(chromiaCanManage(login), false, "but not for import");
   }
   assert.equal(chromiaCanManage({ role: "ADMIN" }), true);
   assert.equal(chromiaCanManage(null), false);
@@ -47,11 +49,12 @@ test("requireChromiaAdmin: a Chromia login first, then chromiaCanManage, refused
   assert.match(CURRENT_USER, /import \{ chromiaCanManage, chromiaTierOf \} from "\.\/tier";/);
 });
 
-test("the four actions ask it before they read a file or touch a row", () => {
+test("the three import actions ask it before they read a file or touch a row", () => {
   const record = read("src/lib/chromia/server/actions/slab-record.ts");
+  // Deleting a slab is every Chromia login's since 17 Nov 2026 — still a Chromia login only.
   const del = fn(record, "deleteSlabRecordAction");
-  assert.match(del, /const user = await requireChromiaAdmin\('delete a slab record'\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
-  assert.doesNotMatch(del, /requireActingUser\(/);
+  assert.match(del, /const user = await requireActingUser\(\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
+  assert.doesNotMatch(record, /requireChromiaAdmin/);
   // The correction itself stays the line's.
   assert.match(fn(record, "updateSlabRecordAction"), /const user = await requireActingUser\(\);/);
 
@@ -75,11 +78,11 @@ test("the rest of the module is untouched: QC and its Edit, dispatch, the stocky
   }
 });
 
-test("Slab Records shows Edit and Delete (change 5, 7 Nov 2026); the delete action stays an admin's", () => {
+test("Slab Records shows Edit and Delete (change 5, 7 Nov 2026), and the delete is the operator's too (17 Nov 2026)", () => {
   const page = read("src/app/chromia/slabs/page.tsx");
   assert.match(page, /await requirePageUser\(\);/);
   assert.match(page, /<SlabActions\n\s+editHref=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1&back=/);
-  assert.match(read("src/lib/chromia/server/actions/slab-record.ts"), /requireChromiaAdmin\('delete a slab record'\)/);
+  assert.doesNotMatch(read("src/lib/chromia/server/actions/slab-record.ts"), /requireChromiaAdmin/);
 });
 
 test("Import shows the form and the Delete buttons only to an admin; everyone else still sees the history", () => {

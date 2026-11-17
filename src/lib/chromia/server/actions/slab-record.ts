@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { requireActingUser, requireChromiaAdmin } from '@/lib/chromia/current-user';
+import { requireActingUser } from '@/lib/chromia/current-user';
 import { isAppError } from '@/lib/chromia/errors';
 import { combineDateAndTime } from '@/lib/chromia/operator-register';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
@@ -87,10 +87,16 @@ export async function updateSlabRecordAction(
 }
 
 /**
- * Remove a slab record and everything recorded against it — admin-only (the
- * owner's decision on CHR-4 of the code review of 20 Oct 2026; see
- * requireChromiaAdmin). Slab Records hides the button below admin; this is the
- * guard that holds whatever page the action is posted from.
+ * Remove a slab record and everything recorded against it — the Delete of the
+ * Action column on Slab Records, Stockyard, Dispatched, Approved Slabs,
+ * Trimming and Recalibration.
+ *
+ * Any Chromia login, the operator included (owner, 17 Nov 2026: "Chromia
+ * operators must have the same Edit and Delete functionality as higher-level
+ * users"). Until then it was admin-only (CHR-4, 20 Oct 2026), so the button
+ * showed on every table but refused an operator. requireActingUser still
+ * holds whatever page the action is posted from: only a Chromia login (the
+ * line, the Plant In-Charge, an admin) may delete. The button asks first.
  */
 export async function deleteSlabRecordAction(
   _previousState: SlabRecordFormState,
@@ -106,7 +112,7 @@ export async function deleteSlabRecordAction(
   }
 
   try {
-    const user = await requireChromiaAdmin('delete a slab record');
+    const user = await requireActingUser();
     await deleteSlabRecord(parsed.data, user.id);
   } catch (error) {
     if (isAppError(error)) {

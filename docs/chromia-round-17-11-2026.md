@@ -10,6 +10,7 @@ Each change is one commit on branch `chromia-round-17-11-2026`, started from
 |---|--------|-------|--------|
 | 1 | Orders: a standalone section for recording and tracking customer orders | Done | See `git log`: "Chromia change 1 (17 Nov round)" |
 | 2 | Attendance: Out-Time the next day for any In-Time, and shifts of any length | Done | See `git log`: "Chromia change 2 (17 Nov round)" |
+| 3 | Edit and Delete for operators on Slab Records, Stockyard, Dispatched, Approved Slabs, Trimming and Recalibration | Done | See `git log`: "Chromia change 3 (17 Nov round)" |
 
 Each change below has the same headings:
 
@@ -218,3 +219,67 @@ Added while it was being built (the owner, 17 Nov 2026):
 - **`src/lib/attendance/reportEmail.ts`, which is not in the standalone:** it uses `nightShiftRow` and `workedLabel`. It should select `outDate` and pass it (`nightShiftRow` reads `date` and `outDate` on the row; `workedLabel(in, out, outDaysOf(date, outDate))`), or a 35-hour shift shows its hours wrong in the 07:00 and 19:00 emails.
 - **Removed exports:** `EVENING_SHIFT_FROM`, `MAX_SHIFT_MINUTES` and `SHIFT_TOO_LONG` are gone. Check Pacific-ERP for other importers, such as Robo pages and tests like `tests/attendance.test.ts` and `review1026Plant.test.ts`, and update tests pinned to the 16-hour or 18:00 rule.
 - **Testing:** check the Robo attendance screen after the port, and port `scripts/workflow/attendance-check.ts` only if the main ERP wants it, since `scripts/workflow/` stayed out last time.
+
+---
+
+### Change #3: Edit and Delete for operators on every slab table
+
+#### Requirement (as given)
+
+> **Enable Edit & Delete Access for Operators.** Implement the following change in the Chromia ERP Operator Login. Operator Login Credentials: Email/Username: chromia@thepacific.group · Password: (given in chat; not recorded here)
+>
+> **1. Enable Edit & Delete Actions for Operators.** Currently, when logged in as an operator, the option to delete slabs is still unavailable. I have already requested this functionality earlier, but it has not been implemented correctly. I want both Edit and Delete buttons to be fully functional for operators, just like they are for users with higher-level access. Apply this change to the last column (Action) of the tables on ALL the following pages: 1. Slab Records 2. Stockyard 3. Dispatched 4. Approved Slabs 5. Trimming 6. Recalibration
+>
+> **2. Action Column Requirements.** Ensure the last column in every listed table is named Action. Display both Edit and Delete buttons in this column. Both buttons must work properly when logged in as an operator. Operators must be able to edit existing slab records and permanently delete slab records from all the listed sections. Ensure the changes are reflected correctly across all interconnected pages, dashboards, KPIs, reports, and records.
+>
+> **3. Important Instructions.** Remove the existing role-based restriction that prevents operators from using Edit and Delete actions on these pages. Do not limit this permission to only one page; it must apply consistently across all six sections. Ensure the Delete operation permanently removes the selected record from the database and updates all related views and counts. Retain the existing delete confirmation mechanism and data-integrity checks. Do not modify unrelated permissions, workflows, UI designs, or functionalities. Test all six sections using the provided Chromia operator login credentials and verify that both Edit and Delete work correctly.
+>
+> **Expected Result:** Chromia operators must have the same Edit and Delete functionality as higher-level users for slab records across all six specified sections. No page should have a missing, disabled, or non-functional Edit/Delete action for operators.
+
+#### What was wrong
+
+All six tables already showed Edit and Delete to every login (change 5, 7 Nov 2026). Edit already saved for operators. **Delete did not:** its server action asked for an admin (`requireChromiaAdmin('delete a slab record')`, the CHR-4 decision of 20 Oct 2026). An operator saw the button, confirmed, and got "Only an admin can delete a slab record." Dispatched's last column also read **Actions**, from change 12, not Action.
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Who may now delete a slab:** any Chromia login, meaning the line operator, the Plant In-Charge and admins. `requireActingUser` still refuses anyone who isn't a Chromia login, from whatever page the action is posted.
+- **Unchanged, as not asked:** importing a production register and deleting an import stay admin-only. Import still says so to an operator.
+- **Unchanged confirmation:** the Delete confirmation ("Delete slab … permanently?"), what is deleted (the slab, its earlier entries and everything recorded against it), and the audit log row.
+- **Dispatched's column** is renamed Action, as this instruction asks, replacing change 12's "Actions".
+- **Recal. Tracking** uses the same button and gains the same; it wasn't on the list but shares the action.
+
+#### Implemented
+
+- `src/lib/chromia/server/actions/slab-record.ts`: `deleteSlabRecordAction` asks `requireActingUser()` instead of `requireChromiaAdmin(...)`.
+- `src/app/chromia/dispatch/page.tsx`: the last column is named Action.
+- The comments in `current-user.ts` and `tier.ts` that listed slab deletion as admin-only are corrected.
+- Tests: `tests/chromiaAdminActions.test.ts`, `tests/chromia/edit-and-sort.test.ts`, `dispatched.test.ts` and `dispatched-alter.test.ts` now hold the new rule and the Action heading.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **Checks:** typecheck clean; Vitest 581 and node tests 74 pass; the production build compiles; the audit passes all 75 checks after the deletes.
+- **Logged in as an operator, on the test database:** the standalone has no sign-in page, so the test copy ran as a Chromia operator (role `CHROMIA`, operator tier) — the tier chromia@thepacific.group has in Pacific-ERP. Import showed "done by an admin", confirming it was an operator.
+- **Edit and Delete on each table, as that operator:**
+
+| Page | Edit (saved, returned to the table) | Delete (confirmed in the dialog) |
+|---|---|---|
+| Slab Records | 900104, Slab Remarks | 900105 |
+| Stockyard | 900301, Slab Remarks | 900302 |
+| Dispatched | 900201, Slab Remarks | 900402 |
+| Approved Slabs | 900108, Slab Remarks | 900303 |
+| Recalibration | 900106, Slab Remarks | 900106 |
+| Trimming | 900107 (graded C → Trimming on Slab Entry first), Sent Date → "Sent for Trimming" | 900107 |
+
+- **The deletes were permanent:** none of the six deleted slab numbers is left in `chromia_slab`, soft-deleted or not. Each has a DELETE row in the Chromia audit log. The Dashboard went from 14 produced slabs to 8, each place down by the slab deleted from it. No console errors.
+- **Not verified:**
+  - **The real login:** the standalone has no sign-in, so chromia@thepacific.group itself wasn't used, and its password wasn't used or stored.
+  - **Pacific-ERP:** nothing has been run there.
+
+#### Main ERP notes
+
+- **The operator login:** in the 27 Oct copy of Pacific-ERP, chromia@thepacific.group is a LINE_MANAGER on the CHROMIA branch, read as a Chromia operator by `chromiaTierOf` and let into `/chromia` by the middleware. Check its current role and branch after the port, then test the six tables signed in as it.
+- **Tests:** port the four updated tests. `tests/chromiaAccess.test.ts` (chromiaCanManage) is unchanged and still right, because chromiaCanManage now guards import only.

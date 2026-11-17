@@ -23,8 +23,8 @@ const SEVEN_TABLES = [
 describe('the Action column (28 Oct 2026; Edit and Delete on all seven tables, change 5)', () => {
   it('is the last column on every slab table', () => {
     for (const path of SEVEN_TABLES) {
-      // Dispatched names it Actions (change 12, 8 Nov 2026).
-      expect(lastHeader(read(path)), path).toBe(path.includes('/dispatch/') ? 'Actions' : 'Action');
+      // Action on all of them — Dispatched too (17 Nov 2026; it read Actions after change 12).
+      expect(lastHeader(read(path)), path).toBe('Action');
     }
   });
 
@@ -46,11 +46,13 @@ describe('the Action column (28 Oct 2026; Edit and Delete on all seven tables, c
     expect(read('src/app/chromia/recalibration-tracking/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{record\.id\}`\}/);
   });
 
-  it('Delete asks first, naming the slab, and deletes through the admin-only slab delete', () => {
+  it('Delete asks first, naming the slab, and deletes through the slab delete — any Chromia login, operators included (17 Nov 2026)', () => {
     const button = read('src/components/chromia/ui/delete-slab-button.tsx');
     expect(button).toMatch(/title=\{`Delete slab \$\{slabNo\} permanently\?`\}/);
     expect(button).toMatch(/deleteSlabRecordAction/);
-    expect(read('src/lib/chromia/server/actions/slab-record.ts')).toMatch(/requireChromiaAdmin\('delete a slab record'\)/);
+    const action = read('src/lib/chromia/server/actions/slab-record.ts');
+    expect(action).not.toMatch(/requireChromiaAdmin/);
+    expect(action).toMatch(/const user = await requireActingUser\(\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
   });
 });
 
