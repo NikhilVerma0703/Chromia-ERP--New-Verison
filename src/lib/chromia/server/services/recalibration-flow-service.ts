@@ -490,6 +490,49 @@ export async function restartProduction(input: RestartAfterRecalibrationInput, u
 }
 
 /**
+ * A slab back from recalibration, corrected on Slab Entry's Edit path (17 Nov
+ * 2026): its QC there is the grade of its NEXT pass, so the pass is started
+ * first — restartProduction, exactly as the Recalibration page does — on the
+ * details the slab holds now (the Edit form has just saved them), dated the
+ * day it came back. Nothing to do for any other slab.
+ */
+export async function restartForQcCorrection(slabId: string, userId: string) {
+  const slab = await prisma.chromiaSlab.findFirst({
+    where: { id: slabId, deletedAt: null },
+    select: {
+      status: true,
+      slabNo: true,
+      currentThicknessMm: true,
+      batch: { select: { batchNo: true } },
+      baseMaterial: { select: { name: true } },
+      plannedDesign: { select: { fileName: true } },
+      recalibrations: { where: { receivedDate: { not: null }, restartedAt: null }, orderBy: { attemptNumber: 'desc' }, take: 1, select: { receivedDate: true } },
+    },
+  });
+  if (!slab) throw new NotFoundError('Slab');
+  if (slab.status !== SlabStatus.RECEIVED_FROM_RECALIBRATION) return false;
+  const back = slab.recalibrations[0]?.receivedDate;
+  if (!back) return false;
+  if (!slab.plannedDesign?.fileName) {
+    throw new BusinessRuleViolationError(`Slab ${slab.slabNo} needs its File Name / Planned Design before its next pass can be graded`);
+  }
+  await restartProduction(
+    {
+      slabId,
+      receivedDate: back,
+      batchNo: slab.batch.batchNo,
+      slabNo: slab.slabNo,
+      baseMaterial: slab.baseMaterial.name,
+      fileName: slab.plannedDesign.fileName,
+      thicknessCm: slab.currentThicknessMm === null ? undefined : Number(slab.currentThicknessMm) / 10,
+      inTime: back,
+    },
+    userId,
+  );
+  return true;
+}
+
+/**
  * Change only the Reason for Recalibration of the trip a slab is on — the
  * one waiting to be sent, or the one out (27 Oct 2026, the unified form's QC
  * Report). A trip already back keeps the reason it went with. The reason is

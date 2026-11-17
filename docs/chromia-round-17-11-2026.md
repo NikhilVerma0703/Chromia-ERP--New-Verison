@@ -11,6 +11,7 @@ Each change is one commit on branch `chromia-round-17-11-2026`, started from
 | 1 | Orders: a standalone section for recording and tracking customer orders | Done | See `git log`: "Chromia change 1 (17 Nov round)" |
 | 2 | Attendance: Out-Time the next day for any In-Time, and shifts of any length | Done | See `git log`: "Chromia change 2 (17 Nov round)" |
 | 3 | Edit and Delete for operators on Slab Records, Stockyard, Dispatched, Approved Slabs, Trimming and Recalibration | Done | See `git log`: "Chromia change 3 (17 Nov round)" |
+| 4 | Slab Records Edit: full Slab Entry for every slab, and any QC Grade and Outcome (Recalibration ⇄ Stock and the rest) | Done | See `git log`: "Chromia change 4 (17 Nov round)" |
 
 Each change below has the same headings:
 
@@ -283,3 +284,82 @@ None.
 
 - **The operator login:** in the 27 Oct copy of Pacific-ERP, chromia@thepacific.group is a LINE_MANAGER on the CHROMIA branch, read as a Chromia operator by `chromiaTierOf` and let into `/chromia` by the middleware. Check its current role and branch after the port, then test the six tables signed in as it.
 - **Tests:** port the four updated tests. `tests/chromiaAccess.test.ts` (chromiaCanManage) is unchanged and still right, because chromiaCanManage now guards import only.
+
+---
+
+### Change #4: Slab Records Edit — the full Slab Entry for every slab, and any QC Grade and Outcome
+
+#### Requirement (as given)
+
+> **Chromia ERP – Change #4: Fix Slab Records Edit Functionality & Allow QC Outcome Changes.** Analyze and fix the existing Edit functionality in the Slab Records table, especially for slabs marked with the QC Outcome Recalibration.
+>
+> **1. Open the Complete Slab Entry Page When Editing.** Currently, clicking the Edit option for a slab in the Slab Records table does not work properly, particularly for recalibration-marked slabs. I want the Edit option to open the same complete Slab Entry page/form used when creating or updating a slab, with all existing details pre-filled. Requirements: Clicking Edit for any slab number must open the complete Slab Entry-type interface. Fetch and populate all existing slab details correctly. All existing fields and sections should be editable. The interface must work consistently for every slab, regardless of its current QC Grade or QC Outcome. Do not create a separate or simplified edit form for recalibration slabs.
+>
+> **2. Allow QC Grade and QC Outcome Changes.** Currently, QC Outcome changes are restricted or not working correctly. I want the ability to change the QC Outcome of any existing slab. For example: A slab with QC Outcome = Recalibration should be editable to Stock. A slab with QC Outcome = Stock should be editable to Recalibration. Similarly, allow changes between all other valid QC Outcomes supported by the existing system. Allow the user to edit the QC Report section, including the QC Grade and QC Outcome fields, wherever applicable.
+>
+> **3. Synchronize All Related Data.** When a slab's QC Grade or QC Outcome is changed: Update the existing slab record in the database. Reflect the new outcome in the appropriate section (Stockyard, Recalibration, Trimming, Dispatched, Approved Slabs, etc.). Remove the slab from its previous outcome/category wherever necessary. Update all connected dashboards, KPIs, reports, downloads, and slab counts. Prevent duplicate records or inconsistent slab statuses. Preserve the slab's identity and history wherever the existing system supports tracking.
+>
+> **4. Important Instructions.** First inspect the existing Slab Records Edit flow, Slab Entry form, QC Report logic, database relationships, and outcome-transition logic. Reuse the existing Slab Entry interface and backend functionality wherever possible. Ensure that recalibration-marked slabs receive the same editing capabilities as other slabs. Validate all permitted QC Grade and QC Outcome combinations according to the existing ERP rules. Do not introduce invalid outcome combinations or bypass existing business validations. Preserve all other existing functionalities, UI designs, permissions, and workflows. Make only the changes required for this request.
+>
+> **Expected Result:** Clicking Edit for any slab in Slab Records should open its complete, pre-filled Slab Entry page. Users must be able to modify QC Grade and QC Outcome, including changing Recalibration to Stock and Stock to Recalibration, with all related ERP sections and reports updating correctly.
+
+#### What was wrong
+
+Edit in Slab Records already opens Slab Entry (`/chromia/operator?slab=…&edit=1`) with the entry pre-filled. For a slab whose QC Outcome was **Recalibration**, the QC Report there was locked with "Slab … is in a recalibration cycle — correct it on the Recalibration page". The save refused the change too, by one rule (`qcCorrectionRefusal`, IN_RECALIBRATION). So Recalibration → Stock was impossible from Slab Records. Stock → Recalibration and the other outcomes already worked for slabs still where their QC put them.
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Recalibration slabs are corrected in the same Slab Entry form,** whatever stage they are at:
+  - **Waiting to be sent, or out at the facility.** The trip is what that QC produced, so a QC change undoes it with the QC, as a stock entry is undone when Stock is changed. The trip row is removed, the attempt counter goes back, and a slab that was out returns to the place it was sent from. Its "sent" event and movements stay in its history, and the correction's history entry names the trip that was undone.
+  - **Back from the facility.** The trip really happened and is kept. The new QC is the grade of the slab's next pass: the Edit path starts that pass first, as the Recalibration page does, on the details the slab holds now and dated the day it came back. Then it grades it.
+- **Rules kept, as the requirement asks:**
+  - Grade A → Stock; Grade B → Stock or Sample Cutting; Grade C → Recalibration or Trimming.
+  - Trimming only for a slab that has never come back from recalibration. One whose trip was undone counts as never sent.
+  - Dispatched, written-off, and cut-for-samples-after-QC slabs still keep their QC. Their entry fields stay editable, and a dispatched slab returns through Dispatched → Alter From Dispatched.
+- **Unchanged QC means no QC change.** Saving the Edit form with the same grade and outcome saves only the entry fields, as before.
+
+#### Implemented
+
+- `src/lib/chromia/qc-correction.ts`: the IN_RECALIBRATION refusal is removed.
+- `src/lib/chromia/server/services/intake-outcome-service.ts` (`resetSlabQcForCorrection`):
+  - it also removes a trip not yet back;
+  - it resets `recalibrationCount`, `isRecalibrationOut` and the location through the same guarded claim;
+  - its CORRECTION event names the trip.
+- `src/lib/chromia/server/services/recalibration-flow-service.ts`: new `restartForQcCorrection`, which reuses `restartProduction`.
+- `src/lib/chromia/server/actions/slab.ts` (`editSlabQcAction`): a returned slab is restarted, then graded.
+- `src/app/chromia/operator/page.tsx`:
+  - the QC Report is offered for these slabs;
+  - Trimming is offered unless a trip has come back.
+- Tests: `tests/chromiaQcCorrection.test.ts` and `tests/chromiaServiceWrites.test.ts`. The workflow checker gains 14 steps.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **Checks:** typecheck clean; Vitest 581 and node tests 75 pass; the production build compiles; the audit passes all 75 checks on the test database and on the local `chromia_erp`.
+- **Workflow check on the test database: all 79 steps pass** (14 new), each with the expected KPI movement and the full audit. One slab went through:
+  - C → Recalibration;
+  - **Recalibration → Stock (A)**, with the waiting trip gone;
+  - **Stock → Recalibration (C)**, a 1st attempt waiting with its new reason;
+  - Recalibration → Trimming;
+  - Trimming → Sample Cutting (B);
+  - Sample Cutting → Recalibration;
+  - sent, then corrected to **Stock while out**: trip undone, attempts 0, not at the facility;
+  - Stock → Recalibration, then sent and received, then corrected to **Stock once back**: trip kept, next pass, in stock;
+  - Trimming refused after a trip;
+  - Stock → Recalibration on the 2nd pass, a 2nd attempt waiting.
+
+  A dispatched slab's QC change is still refused.
+- **In the browser, on the test database:**
+  - A slab entered as C → Recalibration was opened from Slab Records → Edit. The full Slab Entry form was filled in (batch, slab, material, design, thickness, Grade C, Recalibration, reason Pinholes) with the QC Report editable.
+  - Changing to Grade A and saving returned to Slab Records showing "Grade A · Stock · In Stock". The slab was on Stockyard, and off Recalibration and Recal. Tracking. No console errors.
+- **Not verified:**
+  - **On screen:** the "out" and "back" corrections were exercised through the save action, not on screen.
+  - **Pacific-ERP:** nothing has been run there.
+
+#### Main ERP notes
+
+- No schema change. Port the five source files and the two tests.
+- In Pacific-ERP, re-run the workflow checker equivalent or test by hand: a slab waiting, out, and back from recalibration, each corrected to Stock from Slab Records → Edit.

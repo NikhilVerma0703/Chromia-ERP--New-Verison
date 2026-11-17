@@ -1,8 +1,9 @@
 import { DISPOSITION_LABELS, GRADE_ALLOWED_DISPOSITIONS } from '@/lib/chromia/constants/process-stages';
-import { ChromiaCycleStatus as CycleStatus, ChromiaDisposition as Disposition, ChromiaSlabEventType as SlabEventType, type ChromiaSlabGrade as SlabGrade, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
+import { ChromiaCycleStatus as CycleStatus, ChromiaDisposition as Disposition, ChromiaMovementReason as MovementReason, ChromiaSlabEventType as SlabEventType, type ChromiaSlabGrade as SlabGrade, ChromiaSlabStatus as SlabStatus } from '@prisma/client';
 import { prisma, withTransaction, type ChromiaTx } from '@/lib/chromia/db';
 import { BusinessRuleViolationError, NotFoundError } from '@/lib/chromia/errors';
 import { createLogger } from '@/lib/chromia/logger';
+import { toPlantDateInput } from '@/lib/chromia/plant-time';
 import { qcCorrectionRefusal } from '@/lib/chromia/qc-correction';
 import { claimSlab } from '@/lib/chromia/server/services/disposition-service';
 import type { IntakeQcInput } from '@/lib/chromia/validation/slab';
@@ -174,6 +175,17 @@ export async function applyIntakeGrade(
  * One that comes second waits on the row until this save commits and then
  * finds the slab as the correction left it.
  *
+ * ── A SLAB SENT TO RECALIBRATION BY THIS QC (17 Nov 2026) ─────────────────
+ * Its trip, while it has not come back — waiting to be sent, or out at the
+ * facility — is what this QC produced, as a stock entry is for Stock. So it
+ * goes with the QC: the trip row is removed, the attempt counter goes back to
+ * the trips actually completed before it, and a slab that was out is back
+ * where it was sent from. Its RECALIBRATION_SENT event and movements stay —
+ * history is appended, never erased — and the CORRECTION event names the
+ * trip that was undone. A trip already back is never touched: the Edit path
+ * starts that slab's next pass first (editSlabQcAction), so its correction is
+ * the grade of the new pass and nothing to undo here.
+ *
  * `inTx` is the QC save's transaction (CHR-5): if the regrade that follows
  * fails, this reset is rolled back with it instead of committing on its own.
  */
@@ -197,6 +209,13 @@ export async function resetSlabQcForCorrection(
       },
       // One row is enough to know the slab has been dispatched.
       dispatches: { select: { id: true }, take: 1 },
+      // The trip this QC opened, if it has not come back (17 Nov 2026).
+      recalibrations: {
+        where: { receivedDate: null },
+        orderBy: { attemptNumber: 'desc' },
+        take: 1,
+        select: { id: true, attemptNumber: true, sentDate: true },
+      },
     },
   });
   if (!slab) throw new NotFoundError('Slab');
@@ -225,6 +244,24 @@ export async function resetSlabQcForCorrection(
   const cycleId = cycle.id;
   const priorGrade = slab.currentGrade;
   const priorDisposition = slab.currentDisposition;
+  const openTrip = slab.recalibrations[0] ?? null;
+
+  /* A trip that was sent moved the slab to the facility and counted an
+     attempt; undoing it puts both back (the movement history stays). */
+  const sentOut = openTrip?.sentDate
+    ? await (inTx ?? prisma).chromiaSlabMovement.findFirst({
+        where: { slabId: slab.id, reason: MovementReason.RECALIBRATION_OUT },
+        orderBy: { movedAt: 'desc' },
+        select: { fromLocationId: true },
+      })
+    : null;
+  const tripUndone = openTrip?.sentDate
+    ? {
+        recalibrationCount: openTrip.attemptNumber - 1,
+        isRecalibrationOut: false,
+        ...(sentOut?.fromLocationId ? { currentLocationId: sentOut.fromLocationId } : {}),
+      }
+    : {};
 
   // This pass's records: written since the current cycle was opened. A cycle
   // row is created before anything is recorded against it — at entry, in the
@@ -240,8 +277,11 @@ export async function resetSlabQcForCorrection(
       status: SlabStatus.IN_PROCESS,
       currentGrade: null,
       currentDisposition: null,
+      ...tripUndone,
       updatedById: userId,
     });
+
+    if (openTrip) await tx.chromiaRecalibrationCycle.delete({ where: { id: openTrip.id } });
 
     await tx.chromiaStockEntry.deleteMany({ where: thisPass });
     await tx.chromiaSampleCutting.deleteMany({ where: thisPass });
@@ -266,6 +306,12 @@ export async function resetSlabQcForCorrection(
         userId,
         note: `QC reset for correction — was Grade ${priorGrade ?? '—'} → ${
           priorDisposition ? DISPOSITION_LABELS[priorDisposition] : '—'
+        }${
+          openTrip
+            ? `; recalibration attempt ${openTrip.attemptNumber} undone (${
+                openTrip.sentDate ? `sent ${toPlantDateInput(openTrip.sentDate)}` : 'not yet sent'
+              })`
+            : ''
         }`,
       },
     });

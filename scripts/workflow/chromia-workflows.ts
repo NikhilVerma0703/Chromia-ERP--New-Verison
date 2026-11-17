@@ -424,6 +424,57 @@ async function main() {
   });
   expect('gone', await prisma.chromiaTrimming.count({ where: { slabNo: n('10') } }), 0);
 
+  // ── Slab Records Edit: any QC Grade and Outcome (17 Nov 2026, change 4) ──
+  /** The Edit path's Save Entry with a new QC Report, the saved one as its initial values. */
+  const correct = async (slabNo: string, grade: string, disposition: string, reason = '') => {
+    const id = await slabId(slabNo);
+    const now = await prisma.chromiaSlab.findUniqueOrThrow({ where: { id }, select: { currentGrade: true, currentDisposition: true } });
+    return saveSlabEntryAction({}, form({
+      qcMode: 'correct', slabId: id, entryDate: TODAY, receivedDate: TODAY, inTime: '09:30', batchNo: BATCH, slabNo, baseMaterial: MATERIAL,
+      fileName: DESIGN, thicknessCm: '2', slabRemarks: '', grade, disposition, recalibrationReason: reason,
+      initialGrade: now.currentGrade ?? '', initialDisposition: now.currentDisposition ?? '', initialReason: '',
+    }));
+  };
+  const trips = (slabNo: string) => prisma.chromiaRecalibrationCycle.findMany({
+    where: { slab: { slabNo } }, orderBy: { attemptNumber: 'asc' },
+    select: { attemptNumber: true, sentDate: true, receivedDate: true, restartedAt: true, reason: { select: { name: true } } },
+  });
+  const e = n('20');
+  await step('QC: Grade C → Recalibration — Ready', () => enter(e, { grade: 'C', disposition: 'RECALIBRATION', reason: 'Pinholes' }), { produced: 1, recalibration: 1, ready: 1, todayProduced: 1 });
+  await step('Edit: Recalibration → Stock (Grade A) — off Recalibration, onto the rack', () => correct(e, 'A', 'STOCK'), { recalibration: -1, ready: -1, stock: 1 });
+  expect('its waiting trip is gone', (await trips(e)).length, 0);
+  expect('in stock', (await statusOf(e)).status, 'IN_STOCK');
+  await step('Edit: Stock → Recalibration (Grade C, a new reason) — off the rack, Ready', () => correct(e, 'C', 'RECALIBRATION', 'Half Print'), { stock: -1, recalibration: 1, ready: 1 });
+  expect('one waiting trip, 1st attempt, with the new reason', (await trips(e)).map((t) => [t.attemptNumber, t.sentDate, t.reason?.name]), [[1, null, 'Half Print']]);
+  await step('Edit: Recalibration → Trimming (Grade C) — no trip back, so Trimming is allowed', () => correct(e, 'C', 'TRIMMING'), { recalibration: -1, ready: -1, trimming: 1 });
+  await step('Edit: Trimming → Sample Cutting (Grade B)', () => correct(e, 'B', 'SAMPLE_CUTTING'), { trimming: -1, sampleCutting: 1 });
+  await step('Edit: Sample Cutting → Recalibration (Grade C)', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { sampleCutting: -1, recalibration: 1, ready: 1 });
+  await step('…sent for recalibration', () => recalibrationForm(e, { sentDate: TODAY }), { ready: -1, sent: 1, pending: 1 });
+  await step('Edit while it is out: Recalibration → Stock (Grade A) — the trip is undone', () => correct(e, 'A', 'STOCK'), { recalibration: -1, sent: -1, pending: -1, stock: 1 });
+  expect('no trip, no attempt counted, not at the facility', [
+    (await trips(e)).length,
+    (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: e }, select: { recalibrationCount: true, isRecalibrationOut: true } })),
+    (await statusOf(e)).location !== 'EXTERNAL_FACILITY',
+  ], [0, { recalibrationCount: 0, isRecalibrationOut: false }, true]);
+  await step('Edit: Stock → Recalibration again', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, ready: 1 });
+  await step('…sent and received', () => recalibrationForm(e, { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1 });
+  await step('Edit once it is back: Recalibration → Stock (Grade A) — its next pass, graded', () => correct(e, 'A', 'STOCK'), { recalibration: -1, stock: 1 });
+  expect('the trip stays, restarted; the slab is on its 2nd pass, in stock', [
+    (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate), Boolean(t.receivedDate), Boolean(t.restartedAt)]),
+    (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: e }, select: { currentCycleNumber: true, status: true } })),
+  ], [[[1, true, true, true]], { currentCycleNumber: 2, status: 'IN_STOCK' }]);
+  await step('Edit: Trimming is refused for a slab that has been to recalibration', async () => {
+    const refused = await correct(e, 'C', 'TRIMMING');
+    expect('refused', Boolean(refused.error || refused.fieldErrors), true);
+  });
+  expect('still in stock', (await statusOf(e)).status, 'IN_STOCK');
+  await step('Edit: Stock → Recalibration on its 2nd pass — the 2nd attempt waits', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, ready: 1 });
+  expect('2nd attempt waiting', (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate)]), [[1, true], [2, false]]);
+  await step('Edit: a dispatched slab keeps its QC — refused, nothing changed', async () => {
+    const refused = await correct(n('6'), 'B', 'STOCK');
+    expect('refused', Boolean(refused.error), true);
+  });
+
   // ── Edits never duplicate ─────────────────────────────────────────────
   await step('Slab Records Edit: thickness corrected — the same record', async () =>
     saveSlabEntryAction({}, form({ qcMode: 'none', slabId: await slabId(n('2')), entryDate: TODAY, receivedDate: TODAY, inTime: '09:30', batchNo: BATCH, slabNo: n('2'), baseMaterial: MATERIAL, fileName: DESIGN, thicknessCm: '1.8', slabRemarks: 'corrected' })));

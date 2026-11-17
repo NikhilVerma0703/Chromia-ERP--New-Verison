@@ -65,15 +65,13 @@ test("written off: refused — QC never decides waste on this line", () => {
   assert.equal(qcCorrectionRefusal(slab({ status: "WASTE", currentDisposition: "WASTE", decidedDisposition: "WASTE" }))?.reason, "WRITTEN_OFF");
 });
 
-test("in recalibration: refused with the words it always had, pointing at the Recalibration page", () => {
+test("sent to recalibration: corrected like any other slab (17 Nov 2026) — waiting, out, or back", () => {
   for (const s of [
     slab({ status: "GRADED", currentDisposition: "RECALIBRATION", decidedDisposition: "RECALIBRATION" }),
     slab({ status: "OUT_FOR_RECALIBRATION", currentDisposition: "RECALIBRATION" }),
     slab({ status: "RECEIVED_FROM_RECALIBRATION", currentDisposition: "RECALIBRATION" }),
   ]) {
-    const refusal = qcCorrectionRefusal(s);
-    assert.equal(refusal?.reason, "IN_RECALIBRATION");
-    assert.equal(refusal?.message, "Slab 154321 is in a recalibration cycle — correct it on the Recalibration page, not here.");
+    assert.equal(qcCorrectionRefusal(s), null);
   }
 });
 
@@ -87,6 +85,17 @@ test("the reset asks the rule first, with the dispatch rows and this pass's deci
   assert.match(RESET, /const refusal = qcCorrectionRefusal\(\{\n\s+slabNo: slab\.slabNo,\n\s+status: slab\.status,\n\s+currentDisposition: slab\.currentDisposition,\n\s+decidedDisposition: cycle\?\.disposition \?\? null,\n\s+hasDispatch: slab\.dispatches\.length > 0,\n\s+\}\);\n\s+if \(refusal\) throw new BusinessRuleViolationError\(refusal\.message\);/);
   // Refused before anything is deleted.
   assert.ok(RESET.indexOf("qcCorrectionRefusal(") < RESET.indexOf("deleteMany"));
+});
+
+test("a recalibration trip not yet back is undone with the QC; one already back is never touched (17 Nov 2026)", () => {
+  assert.match(RESET, /recalibrations: \{\n\s+where: \{ receivedDate: null \},/);
+  assert.match(RESET, /if \(openTrip\) await tx\.chromiaRecalibrationCycle\.delete\(\{ where: \{ id: openTrip\.id \} \}\);/);
+  assert.match(RESET, /recalibrationCount: openTrip\.attemptNumber - 1,/);
+  // Claimed first, then the trip goes.
+  assert.ok(RESET.indexOf("claimSlab(") < RESET.indexOf("chromiaRecalibrationCycle.delete"));
+  const action = read("src/lib/chromia/server/actions/slab.ts");
+  const edit = action.slice(action.indexOf("export async function editSlabQcAction("), action.indexOf("async function saveQc("));
+  assert.ok(edit.indexOf("restartForQcCorrection(") < edit.indexOf("resetSlabQcForCorrection("), "a slab back is restarted, then graded");
 });
 
 test("only this pass's records are cleared, and no dispatch is ever deleted", () => {
@@ -106,10 +115,10 @@ test("the Edit screen asks the same rule, so it never offers a QC section the sa
   const page = read("src/app/chromia/operator/page.tsx");
   assert.match(page, /import \{ qcCorrectionRefusal \} from '@\/lib\/chromia\/qc-correction';/);
   assert.match(page, /decidedDisposition: selected\.decidedDisposition,\n\s+hasDispatch: selected\.hasDispatch,/);
-  assert.match(page, /correctionRefusal\?\.reason === 'IN_RECALIBRATION'\s+\?/);
+  assert.doesNotMatch(page, /IN_RECALIBRATION/, "a recalibration slab gets the QC Report like any other (17 Nov 2026)");
   // The QC Report is part of the entry form now (27 Oct 2026): a refused
   // correction settles it as 'none' and shows the refusal's own sentence.
-  assert.match(page, /: correctionRefusal\n\s+\? \{ mode: 'none', recalibrationReasons, initial: saved, message: correctionRefusal\.message \}/);
+  assert.match(page, /\? correctionRefusal\n\s+\? \{ mode: 'none', recalibrationReasons, initial: saved, message: correctionRefusal\.message \}/);
   assert.doesNotMatch(page, /const inRecalibration =/, "one rule, not a second copy of part of it");
   const repo = read("src/lib/chromia/server/repositories/slab-record-repository.ts");
   assert.match(repo, /decidedDisposition: cycle\?\.disposition \?\? null,\n\s+hasDispatch: slab\.dispatches\.length > 0,/);

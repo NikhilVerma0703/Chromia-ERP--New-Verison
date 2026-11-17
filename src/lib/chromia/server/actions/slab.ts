@@ -17,7 +17,7 @@ import {
   applyIntakeGrade,
   resetSlabQcForCorrection,
 } from '@/lib/chromia/server/services/intake-outcome-service';
-import { markAwaitingRecalibration } from '@/lib/chromia/server/services/recalibration-flow-service';
+import { markAwaitingRecalibration, restartForQcCorrection } from '@/lib/chromia/server/services/recalibration-flow-service';
 import { resolveRecalibrationReasonId } from '@/lib/chromia/server/services/reference-service';
 import { completeSlabIntake } from '@/lib/chromia/server/services/slab-intake-service';
 
@@ -130,6 +130,18 @@ export async function editSlabQcAction(
   const raw = formData.get('slabId');
   const slabId = typeof raw === 'string' ? raw : '';
   if (!slabId) return { error: 'This slab could not be identified. Reopen it from Slab Records.' };
+
+  /* Back from recalibration (17 Nov 2026): the QC is its next pass's, so the
+     pass is started first, as the Recalibration page does. Its own commit,
+     like that page's: if the grade below then fails, the slab is simply
+     In-Processing on its new pass, ready to be graded again. */
+  try {
+    const user = await requireActingUser();
+    await restartForQcCorrection(slabId, user.id);
+  } catch (error) {
+    if (isAppError(error)) return { error: error.message };
+    throw error;
+  }
 
   return saveQc(formData, async (userId, tx) => {
     await resetSlabQcForCorrection(slabId, userId, tx);

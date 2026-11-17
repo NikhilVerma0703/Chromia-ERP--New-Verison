@@ -123,11 +123,11 @@ export default async function OperatorPage({
 
   // Whether this slab's QC may be redone on the Edit path — the one rule the
   // save itself enforces (resetSlabQcForCorrection), so the section is never
-  // offered for a save that would be refused. A slab mid-recalibration has a
-  // multi-cycle journey the Recalibration page owns, and says where to go; a
-  // slab that has been dispatched, written off, or cut for samples after its
-  // QC has left, and its QC stays as it is (CHR-1, the code review of 20 Oct
-  // 2026). Its entry fields above can still be corrected either way.
+  // offered for a save that would be refused. A slab sent to recalibration is
+  // corrected here like any other (17 Nov 2026). A slab that has been
+  // dispatched, written off, or cut for samples after its QC has left, and its
+  // QC stays as it is (CHR-1, the code review of 20 Oct 2026). Its entry
+  // fields above can still be corrected either way.
   const correctionRefusal =
     selected === null
       ? null
@@ -145,28 +145,13 @@ export default async function OperatorPage({
   const qc: QcReport = !selected
     ? { mode: 'grade', recalibrationReasons }
     : editMode
-      ? correctionRefusal?.reason === 'IN_RECALIBRATION'
-        ? {
-            mode: 'none',
+      ? correctionRefusal
+        ? { mode: 'none', recalibrationReasons, initial: saved, message: correctionRefusal.message }
+        : {
+            mode: 'correct',
             recalibrationReasons,
             initial: saved,
-            message: (
-              <>
-                Slab {selected.slabNo} is in a recalibration cycle — correct it on the{' '}
-                <Link href={`${APP_ROUTES.recalibrations}/${selected.id}`} className={link}>
-                  Recalibration
-                </Link>{' '}
-                page.
-              </>
-            ),
           }
-        : correctionRefusal
-          ? { mode: 'none', recalibrationReasons, initial: saved, message: correctionRefusal.message }
-          : {
-              mode: 'correct',
-              recalibrationReasons,
-              initial: saved,
-            }
       : qcOpen
         ? { mode: 'grade', recalibrationReasons }
         : {
@@ -225,7 +210,9 @@ export default async function OperatorPage({
         nowTime={toTimeInput(new Date())}
         fileNames={fileNames}
         batchNos={batchNos}
-        qc={{ ...qc, allowTrimming: trips.length === 0 }}
+        // Trimming is for a slab that has never come back from recalibration;
+        // a trip not yet back is undone by an Edit correction (17 Nov 2026).
+        qc={{ ...qc, allowTrimming: trips.every((t) => t.receivedDate === null) }}
         back={back}
         editing={
           selected

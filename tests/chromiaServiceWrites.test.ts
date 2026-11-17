@@ -147,7 +147,8 @@ test("CHR-1/CHR-6: claimSlab is shared, so every write that moves a slab on clai
 test("CHR-1/CHR-6: the QC reset claims the slab before it clears anything, and never overwrites it unguarded", () => {
   const reset = fn(OUTCOME, "resetSlabQcForCorrection");
   const open = reset.search(
-    /withTransaction\(inTx, async \(tx\) => \{\n(?:\s+\/\/[^\n]*\n)*\s+await claimSlab\(tx, slab, \{\n\s+status: SlabStatus\.IN_PROCESS,\n\s+currentGrade: null,\n\s+currentDisposition: null,\n\s+updatedById: userId,\n\s+\}\);/,
+    // ...tripUndone: a recalibration trip not yet back, undone with the QC (17 Nov 2026).
+    /withTransaction\(inTx, async \(tx\) => \{\n(?:\s+\/\/[^\n]*\n)*\s+await claimSlab\(tx, slab, \{\n\s+status: SlabStatus\.IN_PROCESS,\n\s+currentGrade: null,\n\s+currentDisposition: null,\n(?:\s+\.\.\.tripUndone,\n)?\s+updatedById: userId,\n\s+\}\);/,
   );
   assert.ok(open > 0, "the claim is the transaction's first statement");
   // After the refusal was decided, before a stock, sample-cutting, waste or grade row goes.

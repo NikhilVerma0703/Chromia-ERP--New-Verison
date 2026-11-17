@@ -27,8 +27,14 @@
  *     never what the QC wrote (A → Dispatch only joins the queue); it is the
  *     day the slab physically left the plant, recorded on the Dispatch page or
  *     the Stockyard, or by the register import.
- *   • In a recalibration cycle — that journey belongs to the Recalibration
- *     page, as it always has.
+ *   • (No longer refused — 17 Nov 2026, the owner: "recalibration-marked
+ *     slabs receive the same editing capabilities as other slabs".) A slab
+ *     whose QC sent it to recalibration may have that QC corrected on the
+ *     Edit path too. While its trip has not come back — waiting to be sent,
+ *     or out — the trip is part of what this QC produced and is undone with
+ *     it (resetSlabQcForCorrection). Once it is back, the correction is the
+ *     grade of its next pass, which the Edit path starts first, as the
+ *     Recalibration page does (editSlabQcAction).
  *   • Cut for samples when the QC on this pass said something else (stocked,
  *     then cut from the rack). The cut is its own later event, not the QC's.
  *
@@ -61,8 +67,8 @@ export interface QcCorrectionState {
   hasDispatch: boolean;
 }
 
-/** Why a QC may not be redone. IN_RECALIBRATION is the one with somewhere to go. */
-export type QcCorrectionRefusalReason = 'WRITTEN_OFF' | 'DISPATCHED' | 'IN_RECALIBRATION' | 'CUT_AFTER_QC';
+/** Why a QC may not be redone. */
+export type QcCorrectionRefusalReason = 'WRITTEN_OFF' | 'DISPATCHED' | 'CUT_AFTER_QC';
 
 export interface QcCorrectionRefusal {
   reason: QcCorrectionRefusalReason;
@@ -83,17 +89,6 @@ export function qcCorrectionRefusal(slab: QcCorrectionState): QcCorrectionRefusa
     return {
       reason: 'DISPATCHED',
       message: `Slab ${slab.slabNo} has already been dispatched — it has left the plant, so its QC can no longer be redone. Its entry details can still be corrected.`,
-    };
-  }
-
-  if (
-    slab.currentDisposition === 'RECALIBRATION' ||
-    slab.status === 'OUT_FOR_RECALIBRATION' ||
-    slab.status === 'RECEIVED_FROM_RECALIBRATION'
-  ) {
-    return {
-      reason: 'IN_RECALIBRATION',
-      message: `Slab ${slab.slabNo} is in a recalibration cycle — correct it on the Recalibration page, not here.`,
     };
   }
 
