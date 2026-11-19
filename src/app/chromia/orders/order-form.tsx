@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Field, FormError } from '@/components/chromia/ui';
 import { field, selectField } from '@/components/chromia/ui/form';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { ORDER_FINISHING_OPTIONS, ORDER_OTHERS, ORDER_THICKNESS_OPTIONS } from '@/lib/chromia/orders';
+import { ORDER_FINISHING_OPTIONS, ORDER_INITIATED_BY_LABEL, ORDER_OTHERS, ORDER_THICKNESS_OPTIONS } from '@/lib/chromia/orders';
 import { saveOrderAction, type OrderFormState } from '@/lib/chromia/server/actions/orders';
 
 import { PhotoEditor, type PhotoEditorHandle } from './photo-editor';
@@ -62,17 +62,24 @@ const primary =
  * Delivery Date, Person In-Charge, Reference Photo and Remarks. Only the
  * customer's name is required. Status follows the Actual Delivery Date:
  * Pending without one, Order Completed with one.
+ *
+ * `limited` is the Chromia Operator's form (19 Nov 2026): Customer Name and
+ * Order Initiated By are not on it at all — not hidden, absent — and the
+ * server keeps the order's own values for both (saveOrderAction). Every other
+ * field, Requested and Actual Delivery Date included, is the operator's.
  */
 export function OrderForm({
   order,
   customerNames,
   baseMaterials,
   fileNames,
+  limited = false,
 }: {
   order?: OrderFormValues;
   customerNames: string[];
   baseMaterials: string[];
   fileNames: string[];
+  limited?: boolean;
 }) {
   const router = useRouter();
   const editing = Boolean(order?.id);
@@ -121,17 +128,21 @@ export function OrderForm({
       <input type="hidden" name="id" value={initial.id} />
       <div key={round} className="flex flex-col gap-6">
         <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Customer Name *" htmlFor="customerName" error={errors?.customerName?.[0]}>
-            <input id="customerName" name="customerName" required list="order-customers" defaultValue={initial.customerName} maxLength={120} className={field} />
-            <datalist id="order-customers">
-              {customerNames.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-          </Field>
-          <Field label="Requested By" htmlFor="requestedBy" error={errors?.requestedBy?.[0]}>
-            <input id="requestedBy" name="requestedBy" defaultValue={initial.requestedBy} maxLength={120} className={field} />
-          </Field>
+          {limited ? null : (
+            <>
+              <Field label="Customer Name *" htmlFor="customerName" error={errors?.customerName?.[0]}>
+                <input id="customerName" name="customerName" required list="order-customers" defaultValue={initial.customerName} maxLength={120} className={field} />
+                <datalist id="order-customers">
+                  {customerNames.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </Field>
+              <Field label={ORDER_INITIATED_BY_LABEL} htmlFor="requestedBy" error={errors?.requestedBy?.[0]}>
+                <input id="requestedBy" name="requestedBy" defaultValue={initial.requestedBy} maxLength={120} className={field} />
+              </Field>
+            </>
+          )}
           <Field label="Design Name" htmlFor="designName" error={errors?.designName?.[0]}>
             <input id="designName" name="designName" defaultValue={initial.designName} maxLength={120} className={field} />
           </Field>
@@ -251,7 +262,7 @@ export function OrderForm({
         <FormError message={state.error} />
         {state.savedAt && !editing && !state.error ? (
           <p className="text-status-done text-sm font-medium" role="status">
-            Order for {state.savedCustomer} saved — it is at the top of Recent Orders.
+            {state.savedCustomer ? `Order for ${state.savedCustomer} saved` : 'Order saved'} — it is at the top of Recent Orders.
           </p>
         ) : null}
         <div className="flex flex-wrap items-center gap-4">

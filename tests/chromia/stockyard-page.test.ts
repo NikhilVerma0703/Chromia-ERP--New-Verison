@@ -129,7 +129,8 @@ describe('Stockyard → Sent From Stock (change 11, 8 Nov 2026)', () => {
   });
 
   it('gives every row Edit (the Stockyard Edit form, from=sent) and the global permanent Delete', () => {
-    expect(section).toMatch(/<SlabActions editHref=\{`\$\{APP_ROUTES\.stockyard\}\/\$\{slab\.id\}\/edit\?from=sent`\} slabId=\{slab\.id\} slabNo=\{slab\.slabNo\} \/>/);
+    // Delete only where the login may delete (19 Nov 2026).
+    expect(section).toMatch(/<SlabActions editHref=\{`\$\{APP_ROUTES\.stockyard\}\/\$\{slab\.id\}\/edit\?from=sent`\} slabId=\{slab\.id\} slabNo=\{slab\.slabNo\} canDelete=\{canDelete\} \/>/);
   });
 
   it('lists slabs released from the rack by the outcome they are in now, each physical slab once', () => {

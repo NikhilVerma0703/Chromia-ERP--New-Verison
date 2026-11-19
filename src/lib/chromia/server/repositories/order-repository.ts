@@ -73,6 +73,17 @@ export async function listPendingOrders(): Promise<OrderRow[]> {
   return rows.map(toRow);
 }
 
+/** Every completed order — the Completed Orders KPI's list (19 Nov 2026), the same condition it counts. */
+export async function listCompletedOrders(): Promise<OrderRow[]> {
+  const rows = await prisma.chromiaOrder.findMany({ where: { actualDeliveryDate: { not: null } }, orderBy: LATEST_FIRST });
+  return rows.map(toRow);
+}
+
+/** A KPI's list: the very rows its card counts, the screen and the Excel alike. */
+export function listOrdersInView(view: 'pending' | 'completed'): Promise<OrderRow[]> {
+  return view === 'pending' ? listPendingOrders() : listCompletedOrders();
+}
+
 /** The two Dashboard KPIs. Together they are every order. */
 export async function countOrders(): Promise<{ completed: number; pending: number }> {
   const [completed, pending] = await Promise.all([

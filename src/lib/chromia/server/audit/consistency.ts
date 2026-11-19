@@ -4,7 +4,8 @@ import { prisma } from '@/lib/chromia/db';
 import { PRODUCTION_PLACES } from '@/lib/chromia/constants/production-places';
 import { parseApprovedFilters } from '@/lib/chromia/approved-filters';
 import { parseDispatchedFilters } from '@/lib/chromia/dispatched-filters';
-import { boardRows, parseBoardFilters } from '@/lib/chromia/recalibration-board';
+import { BOARD_VIEWS, boardRows, CURRENT_VIEWS, parseBoardFilters } from '@/lib/chromia/recalibration-board';
+import { stageOf } from '@/lib/chromia/recalibration-flow';
 import { buildTrackingKpis } from '@/lib/chromia/recalibration-kpis';
 import { parseSlabFilters } from '@/lib/chromia/slab-filters';
 import { parseStockyardFilters } from '@/lib/chromia/stockyard-filters';
@@ -141,12 +142,21 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   same('Dashboard Sample Cutting = Stockyard', overall.sampleCutting, yard.sampleCutting);
 
   // ── Recalibration ─────────────────────────────────────────────────────
-  for (const view of ['ready', 'sent', 'received', 'pending'] as const) {
+  // Eight KPIs in two sections (19 Nov 2026): each card's number is its rows.
+  for (const view of BOARD_VIEWS) {
     same(`Recalibration ${view} KPI = its rows`, board.kpis[view], boardRows(board.states, view).length);
   }
   same('Recalibration Pending = Sent − Received', board.kpis.sent - board.kpis.received, board.kpis.pending);
+  none('Recalibration Sent ≤ Recalibrated, Received ≤ Sent', board.kpis.sent > board.kpis.recalibrated || board.kpis.received > board.kpis.sent ? ['out of order'] : []);
+  // Current Status: each slab in one card at most, and once.
+  const currentRows = CURRENT_VIEWS.flatMap((view) => boardRows(board.states, view).map((r) => r.slabId));
+  none('Recalibration Current Status counts each slab once', currentRows.filter((id, i) => currentRows.indexOf(id) !== i));
+  // A slab out now has exactly one attempt out: Sent for Recalibration (slabs) = Pending (sends).
+  same('Recalibration Sent now (slabs) = Pending (sends)', board.kpis.out, board.kpis.pending);
   const trackingKpis = buildTrackingKpis(tracking);
-  same('Tracking waiting = Recalibration Ready', board.kpis.ready, trackingKpis.waiting);
+  // Tracking's "waiting" is every slab waiting to be sent, a repeat send included;
+  // Ready is the first send only, so the two are compared through the stages.
+  same('Tracking waiting = slabs waiting to be sent', board.states.filter((st) => stageOf(st) === 'AWAITING_SEND').length, trackingKpis.waiting);
   same('Tracking out = Recalibration Pending', board.kpis.pending, trackingKpis.out);
 
   // ── Dashboard: Total Current Stock's table (7 Nov 2026) ──────────────

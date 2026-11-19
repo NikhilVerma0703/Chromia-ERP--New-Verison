@@ -46,14 +46,16 @@ const CURRENT_USER = read("src/lib/chromia/current-user.ts");
 test("requireChromiaAdmin: a Chromia login first, then chromiaCanManage, refused as an AppError the actions show", () => {
   const body = fn(CURRENT_USER, "requireChromiaAdmin");
   assert.match(body, /const user = await requireActingUser\(\);\n\s+if \(!chromiaCanManage\(await currentUser\(\)\)\) \{\n\s+throw new AppError\(ErrorCode\.FORBIDDEN, `Only an admin can \$\{doing\}\.`, 403\);\n\s+\}\n\s+return user;/);
-  assert.match(CURRENT_USER, /import \{ chromiaCanManage, chromiaTierOf \} from "\.\/tier";/);
+  assert.match(CURRENT_USER, /import \{ chromiaCanDeleteSlab, chromiaCanManage, chromiaTierOf \} from "\.\/tier";/);
 });
 
 test("the three import actions ask it before they read a file or touch a row", () => {
   const record = read("src/lib/chromia/server/actions/slab-record.ts");
-  // Deleting a slab is every Chromia login's since 17 Nov 2026 — still a Chromia login only.
+  // Deleting a slab: every Chromia login's since 17 Nov 2026, but not the
+  // Chromia Operator's since 19 Nov 2026 (requireChromiaDeleter; see
+  // tests/chromiaDeleteAccess.test.ts).
   const del = fn(record, "deleteSlabRecordAction");
-  assert.match(del, /const user = await requireActingUser\(\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
+  assert.match(del, /const user = await requireChromiaDeleter\('delete a slab record'\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
   assert.doesNotMatch(record, /requireChromiaAdmin/);
   // The correction itself stays the line's.
   assert.match(fn(record, "updateSlabRecordAction"), /const user = await requireActingUser\(\);/);
@@ -78,9 +80,10 @@ test("the rest of the module is untouched: QC and its Edit, dispatch, the stocky
   }
 });
 
-test("Slab Records shows Edit and Delete (change 5, 7 Nov 2026), and the delete is the operator's too (17 Nov 2026)", () => {
+test("Slab Records shows Edit and Delete (change 5, 7 Nov 2026); Delete only where the login may delete (19 Nov 2026)", () => {
   const page = read("src/app/chromia/slabs/page.tsx");
-  assert.match(page, /await requirePageUser\(\);/);
+  assert.match(page, /const user = await requirePageUser\(\);/);
+  assert.match(page, /const canDelete = chromiaCanDeleteSlab\(user\);/);
   assert.match(page, /<SlabActions\n\s+editHref=\{`\$\{APP_ROUTES\.operator\}\?slab=\$\{slab\.id\}&edit=1&back=/);
   assert.doesNotMatch(read("src/lib/chromia/server/actions/slab-record.ts"), /requireChromiaAdmin/);
 });

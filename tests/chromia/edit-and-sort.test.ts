@@ -46,13 +46,15 @@ describe('the Action column (28 Oct 2026; Edit and Delete on all seven tables, c
     expect(read('src/app/chromia/recalibration-tracking/page.tsx')).toMatch(/editHref=\{`\$\{APP_ROUTES\.recalibrations\}\/\$\{record\.id\}`\}/);
   });
 
-  it('Delete asks first, naming the slab, and deletes through the slab delete — any Chromia login, operators included (17 Nov 2026)', () => {
+  it('Delete asks first, naming the slab, and deletes through the slab delete — every Chromia login but the Chromia Operator (19 Nov 2026)', () => {
     const button = read('src/components/chromia/ui/delete-slab-button.tsx');
     expect(button).toMatch(/title=\{`Delete slab \$\{slabNo\} permanently\?`\}/);
     expect(button).toMatch(/deleteSlabRecordAction/);
+    // Drawn only where the login may delete; Edit always (tests/chromiaDeleteAccess.test.ts).
+    expect(button).toMatch(/\{canDelete && <DeleteSlabButton slabId=\{slabId\} slabNo=\{slabNo\} \/>\}/);
     const action = read('src/lib/chromia/server/actions/slab-record.ts');
     expect(action).not.toMatch(/requireChromiaAdmin/);
-    expect(action).toMatch(/const user = await requireActingUser\(\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
+    expect(action).toMatch(/const user = await requireChromiaDeleter\('delete a slab record'\);\n\s+await deleteSlabRecord\(parsed\.data, user\.id\);/);
   });
 });
 

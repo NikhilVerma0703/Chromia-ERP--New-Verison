@@ -22,6 +22,7 @@ import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { requirePageUser } from '@/lib/pageUser';
 
 import { FilterBar } from './filter-bar';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Slab Records' };
 export const dynamic = 'force-dynamic';
@@ -44,7 +45,10 @@ export default async function SlabsPage({
   // Signed in, or no further, on every visit: the module layout's gate is
   // not run again when the browser moves between this module's pages
   // (requirePageUser in lib/pageUser.ts says why).
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const filters = parseSlabFilters(await searchParams);
   const filtered = hasActiveFilters(filters);
 
@@ -190,6 +194,7 @@ export default async function SlabsPage({
                           editHref={`${APP_ROUTES.operator}?slab=${slab.id}&edit=1&back=${encodeURIComponent(backTo)}`}
                           slabId={slab.id}
                           slabNo={slab.slabNo}
+                          canDelete={canDelete}
                         />
                       </td>
                     </tr>

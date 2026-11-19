@@ -43,6 +43,8 @@ export const API_ROUTES = {
   slabPhoto: '/api/chromia/slab-photo',
   /** One saved order Reference Photo: `${orderPhoto}/<photo id>`. */
   orderPhoto: '/api/chromia/order-photo',
+  /** Pending or Completed Orders as Excel: `${ordersExport}?view=pending` (19 Nov 2026). */
+  ordersExport: '/api/chromia/orders-export',
 } as const;
 
 export const PAGINATION = {

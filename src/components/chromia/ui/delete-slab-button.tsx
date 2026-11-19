@@ -59,12 +59,19 @@ export function DeleteSlabButton({ slabId, slabNo }: { slabId: string; slabNo: s
   );
 }
 
-/** Edit and Delete, side by side — the Action column of every slab table. */
-export function SlabActions({ editHref, slabId, slabNo }: { editHref: string; slabId: string; slabNo: string }) {
+/**
+ * Edit and Delete, side by side — the Action column of every slab table.
+ *
+ * The page says whether to draw Delete (19 Nov 2026): `canDelete` is
+ * chromiaCanDeleteSlab for the signed-in login — false for the Chromia
+ * Operator, who keeps Edit. The delete action asks the same rule again, so
+ * hiding the button is not what keeps the operator out.
+ */
+export function SlabActions({ editHref, slabId, slabNo, canDelete }: { editHref: string; slabId: string; slabNo: string; canDelete: boolean }) {
   return (
     <div className="flex justify-end gap-2">
       <EditButton href={editHref} slabNo={slabNo} />
-      <DeleteSlabButton slabId={slabId} slabNo={slabNo} />
+      {canDelete && <DeleteSlabButton slabId={slabId} slabNo={slabNo} />}
     </div>
   );
 }

@@ -8,7 +8,9 @@ import { revalidatePath } from 'next/cache';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { requireActingUser } from '@/lib/chromia/current-user';
 import { prisma } from '@/lib/chromia/db';
-import { isAppError } from '@/lib/chromia/errors';
+import { AppError, ErrorCode, isAppError } from '@/lib/chromia/errors';
+import { chromiaHasFullOrderAccess } from '@/lib/chromia/tier';
+import { currentUser } from '@/lib/rbac';
 import { createLogger } from '@/lib/chromia/logger';
 import { ORDER_FORM_FIELDS, parseOrderForm } from '@/lib/chromia/orders';
 import { ORDER_PHOTO_MODEL } from '@/lib/chromia/server/repositories/order-repository';
@@ -52,13 +54,20 @@ async function readPhoto(value: FormDataEntryValue | null): Promise<Photo | null
  * files, the original and the annotated copy; both are stored in entry_photo
  * against the order, and any photo it had before is replaced. Nothing outside
  * chromia_order and its photos is read or written.
+ *
+ * THE CHROMIA OPERATOR (19 Nov 2026) has no Customer Name and no Order
+ * Initiated By. Decided here from the signed-in login, not from the form: an
+ * operator's save keeps the order's own two values whatever the request
+ * carries (none, for a new order — a role that sees customers adds the name
+ * later), and does not need a customer name to save.
  */
 export async function saveOrderAction(_previous: OrderFormState, formData: FormData): Promise<OrderFormState> {
   const text = (key: string) => {
     const value = formData.get(key);
     return typeof value === 'string' ? value : '';
   };
-  const parsed = parseOrderForm(Object.fromEntries(ORDER_FORM_FIELDS.map((key) => [key, text(key)])));
+  const full = chromiaHasFullOrderAccess(await currentUser());
+  const parsed = parseOrderForm(Object.fromEntries(ORDER_FORM_FIELDS.map((key) => [key, text(key)])), { withCustomer: full });
   if (!parsed.ok) return { fieldErrors: parsed.fieldErrors, error: 'Check the highlighted fields.' };
 
   const original = await readPhoto(formData.get('photoOriginal'));
@@ -76,6 +85,11 @@ export async function saveOrderAction(_previous: OrderFormState, formData: FormD
     await prisma.$transaction(async (tx) => {
       const before = id ? await tx.chromiaOrder.findUnique({ where: { id } }) : null;
       if (id && !before) throw new Error('This order no longer exists. Reload the page.');
+      if (!full) {
+        // Not the operator's to set or see: kept as the order has them.
+        values.customerName = before?.customerName ?? '';
+        values.requestedBy = before?.requestedBy ?? null;
+      }
 
       const orderId = before?.id ?? randomUUID();
       let photoIds: { photoOriginalId: string; photoEditedId: string } | null = null;
@@ -124,5 +138,56 @@ export async function saveOrderAction(_previous: OrderFormState, formData: FormD
 
   revalidatePath(APP_ROUTES.orders);
   if (id) revalidatePath(`${APP_ROUTES.orders}/${id}`);
-  return { savedAt: Date.now(), savedCustomer: values.customerName };
+  return { savedAt: Date.now(), savedCustomer: full ? values.customerName : undefined };
+}
+
+export interface OrderDeleteState {
+  error?: string;
+  deletedAt?: number;
+}
+
+/**
+ * Delete an order for good (19 Nov 2026): the order, its Reference Photo pair,
+ * and nothing else (no slab record reads an order). A DELETE row in the audit
+ * log keeps what it was.
+ *
+ * Every Chromia login but the Chromia Operator (chromiaHasFullOrderAccess) —
+ * asked HERE, so a request sent without the button is refused the same way.
+ */
+export async function deleteOrderAction(_previous: OrderDeleteState, formData: FormData): Promise<OrderDeleteState> {
+  const id = String(formData.get('id') ?? '').trim();
+  if (!id) return { error: 'This order could not be identified. Reload Orders and try again.' };
+  try {
+    const user = await requireActingUser();
+    if (!chromiaHasFullOrderAccess(await currentUser())) {
+      throw new AppError(ErrorCode.FORBIDDEN, 'The Chromia Operator login cannot delete an order. Ask the In-Charge or an admin.', 403);
+    }
+    await prisma.$transaction(async (tx) => {
+      const order = await tx.chromiaOrder.findUnique({ where: { id } });
+      if (!order) throw new AppError(ErrorCode.NOT_FOUND, 'This order has already been deleted. Reload Orders.', 404);
+      await tx.entryPhoto.deleteMany({ where: { model: ORDER_PHOTO_MODEL, recordId: id } });
+      await tx.chromiaOrder.delete({ where: { id } });
+      await tx.chromiaAuditLog.create({
+        data: {
+          entity: 'Order',
+          entityId: id,
+          action: AuditAction.DELETE,
+          userId: user.id,
+          changes: {
+            customerName: order.customerName,
+            designName: order.designName,
+            quantity: order.quantity,
+            delivered: order.actualDeliveryDate !== null,
+          },
+        },
+      });
+    });
+    log.warn({ id }, 'Order deleted');
+  } catch (error) {
+    if (isAppError(error) || error instanceof Error) return { error: error.message };
+    throw error;
+  }
+  revalidatePath(APP_ROUTES.orders);
+  revalidatePath(`${APP_ROUTES.orders}/${id}`);
+  return { deletedAt: Date.now() };
 }

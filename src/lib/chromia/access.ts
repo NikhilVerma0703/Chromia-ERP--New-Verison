@@ -10,7 +10,7 @@
  * /api/chromia route handler.
  */
 import { currentUser } from "@/lib/rbac";
-import { chromiaTierOf, chromiaCanManage, CHROMIA_TIER_RANK, type ChromiaTier } from "./tier";
+import { chromiaTierOf, chromiaCanManage, chromiaCanDeleteSlab, chromiaHasFullOrderAccess, isChromiaLineOperator, CHROMIA_TIER_RANK, type ChromiaTier } from "./tier";
 
 export interface ChromiaGate {
   ok: boolean;
@@ -29,5 +29,5 @@ export async function chromiaGate(min: ChromiaTier = "OPERATOR"): Promise<Chromi
   return { ok: true, status: 200, user, tier };
 }
 
-export { chromiaTierOf, chromiaCanManage, CHROMIA_TIER_RANK };
+export { chromiaTierOf, chromiaCanManage, chromiaCanDeleteSlab, chromiaHasFullOrderAccess, isChromiaLineOperator, CHROMIA_TIER_RANK };
 export type { ChromiaTier };

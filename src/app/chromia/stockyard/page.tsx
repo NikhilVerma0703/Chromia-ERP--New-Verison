@@ -22,6 +22,7 @@ import { requirePageUser } from '@/lib/pageUser';
 
 import { FindASlab } from './find-a-slab';
 import { StockOutcomeForm } from './stock-outcome-form';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Stockyard' };
 export const dynamic = 'force-dynamic';
@@ -86,7 +87,10 @@ export default async function StockyardPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const raw = await searchParams;
   const filters = parseStockyardFilters(raw);
   // Sent From Stock's own Slab Number search (change 11) — apart from Find a Slab.
@@ -252,7 +256,7 @@ export default async function StockyardPage({
                       )}
                     </td>
                     <td className={`${td} text-right`}>
-                      <SlabActions editHref={`${APP_ROUTES.stockyard}/${row.slabId}/edit`} slabId={row.slabId} slabNo={row.slabNo} />
+                      <SlabActions editHref={`${APP_ROUTES.stockyard}/${row.slabId}/edit`} slabId={row.slabId} slabNo={row.slabNo} canDelete={canDelete} />
                     </td>
                   </tr>
                 ))}
@@ -359,7 +363,7 @@ export default async function StockyardPage({
                         {manualRemark(slab.remarks, slab.currentDisposition) ?? <span className="text-muted">—</span>}
                       </td>
                       <td className={`${td} text-right`}>
-                        <SlabActions editHref={`${APP_ROUTES.stockyard}/${slab.id}/edit?from=sent`} slabId={slab.id} slabNo={slab.slabNo} />
+                        <SlabActions editHref={`${APP_ROUTES.stockyard}/${slab.id}/edit?from=sent`} slabId={slab.id} slabNo={slab.slabNo} canDelete={canDelete} />
                       </td>
                     </tr>
                   ))}

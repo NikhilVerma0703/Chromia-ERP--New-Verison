@@ -10,8 +10,9 @@ import { parsePage, RECALIBRATION_PAGE_SIZE } from '@/lib/chromia/list-limits';
 import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import {
   BOARD_VIEW_LABELS,
-  BOARD_VIEWS,
   buildBoardQuery,
+  CURRENT_VIEWS,
+  OVERALL_VIEWS,
   hasBoardFilters,
   parseBoardFilters,
   type BoardView,
@@ -23,6 +24,7 @@ import { boardFilterOptions, loadRecalibrationBoard } from '@/lib/chromia/server
 import { requirePageUser } from '@/lib/pageUser';
 
 import { RecalibrationFindASlab } from './find-a-slab';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Recalibration' };
 export const dynamic = 'force-dynamic';
@@ -44,10 +46,26 @@ const STAGE_CLASS: Record<string, string> = {
 };
 
 const CARD_TONE: Record<BoardView, string> = {
-  ready: 'bg-status-recalibration',
+  recalibrated: 'bg-status-recalibration',
   sent: 'bg-status-hold',
   received: 'bg-status-active',
   pending: 'bg-status-waste',
+  ready: 'bg-status-recalibration',
+  out: 'bg-status-hold',
+  returned: 'bg-status-active',
+  available: 'bg-status-done',
+};
+
+/** What each card counts, under its number. */
+const CARD_HINT: Record<BoardView, string> = {
+  recalibrated: 'every recalibration record, repeat attempts included',
+  sent: 'every send, repeat attempts included',
+  received: 'every receipt, repeat attempts included',
+  pending: 'sends not yet received (Sent − Received)',
+  ready: 'slabs awaiting their first send',
+  out: 'slabs out now, awaiting receipt',
+  returned: 'slabs back, awaiting reprinting',
+  available: 'slabs reprinted, awaiting QC',
 };
 
 /**
@@ -56,9 +74,10 @@ const CARD_TONE: Record<BoardView, string> = {
  *
  * EXACTLY THREE SECTIONS, IN THIS ORDER:
  *
- *   Dashboard            Ready for Recalibration (slabs) · Sent · Received ·
- *                        Pending = Sent − Received (trips) — every card a link
- *                        that turns the table to its own slabs or trips
+ *   Dashboard            OVERALL STATUS — four counts of events, repeat attempts
+ *                        included; CURRENT STATUS — four counts of slabs where
+ *                        they are now, each slab once (19 Nov 2026). Every card
+ *                        a link that turns the table to exactly its own rows
  *                        (lib/chromia/recalibration-board.ts says how it counts);
  *   Find a Slab          Production Date, Batch, Slab, Material, Design;
  *   Recalibration Records  the fourteen columns, a page at a time (CHR-10).
@@ -70,7 +89,10 @@ const CARD_TONE: Record<BoardView, string> = {
  * Current Status is statusLabel, derived from the saved trips and QC result.
  */
 export default async function RecalibrationsPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const params = await searchParams;
   const filters = parseBoardFilters(params);
   const filtered = hasBoardFilters(filters);
@@ -81,8 +103,9 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
   ]);
   const { kpis, rows } = board;
 
+  // The card's rows, in Recalibration Records below — a second click shows every slab again.
   const cardHref = (view: BoardView) =>
-    `${APP_ROUTES.recalibrations}?${buildBoardQuery(filters, { view: filters.view === view ? '' : view })}`;
+    `${APP_ROUTES.recalibrations}?${buildBoardQuery(filters, { view: filters.view === view ? '' : view })}${filters.view === view ? '' : '#records'}`;
   const pageHref = (page: number) => `${APP_ROUTES.recalibrations}?${buildBoardQuery(filters, { page: String(page) })}`;
   const shown = filters.view ? BOARD_VIEW_LABELS[filters.view] : 'All recalibration slabs';
 
@@ -90,39 +113,53 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
     <>
       <PageHeader
         title="Recalibration"
-        description={`${kpis.ready} ready to send · ${kpis.pending} out at recalibration`}
+        description={`${kpis.ready} ready to send · ${kpis.out} out at recalibration`}
       />
 
       {/* ------------------------------------------------------ Dashboard --- */}
       <div className="mb-6">
         <SectionCard title="Dashboard" accent="brand" padded>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {BOARD_VIEWS.map((view) => {
-              const active = filters.view === view;
-              return (
-                <Link
-                  key={view}
-                  href={cardHref(view)}
-                  aria-current={active ? 'true' : undefined}
-                  data-kpi={view}
-                  title={active ? 'Showing these — click again to show every slab' : `Show ${BOARD_VIEW_LABELS[view].toLowerCase()} in the table`}
-                  className={`surface block h-full rounded-xl border p-5 shadow-[0_1px_3px_rgba(16,24,40,0.06)] transition-colors hover:border-brand-400 ${
-                    active ? 'border-brand-600 ring-brand-600 ring-2' : 'border-line'
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className={`mt-[6px] inline-block size-1.5 shrink-0 rounded-full ${CARD_TONE[view]}`} />
-                    <span className="text-muted text-[11px] leading-[1.35] font-semibold tracking-[0.1em] uppercase">{BOARD_VIEW_LABELS[view]}</span>
-                  </div>
-                  <p className="mt-3 text-[30px] leading-none font-semibold tracking-tight tabular-nums">{kpis[view]}</p>
-                  <p className="text-muted mt-2 text-xs">
-                    {view === 'ready' ? 'slabs not yet sent' : view === 'pending' ? 'trips sent, not yet back (Sent − Received)' : 'trips'}
-                    {active ? ' · shown below' : ''}
-                  </p>
-                </Link>
-              );
-            })}
-          </div>
+          {(
+            [
+              ['OVERALL STATUS', 'All recalibration activity from the beginning — a slab sent twice counts twice.', OVERALL_VIEWS],
+              ['CURRENT STATUS', 'Where each slab is now — every slab counted once.', CURRENT_VIEWS],
+            ] as const
+          ).map(([heading, about, views], i) => (
+            <section key={heading} aria-labelledby={`recal-${i}`} className={i === 0 ? 'mb-6' : ''}>
+              <h3 id={`recal-${i}`} className="text-foreground text-xs font-semibold tracking-[0.14em]">
+                {heading}
+              </h3>
+              <p className="text-muted mt-1 mb-3 text-xs">{about}</p>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {views.map((view) => {
+                  const active = filters.view === view;
+                  const slabs = (CURRENT_VIEWS as readonly string[]).includes(view);
+                  return (
+                    <Link
+                      key={view}
+                      href={cardHref(view)}
+                      aria-current={active ? 'true' : undefined}
+                      data-kpi={view}
+                      title={active ? 'Showing these — click again to show every slab' : `Show ${BOARD_VIEW_LABELS[view].toLowerCase()} in the table`}
+                      className={`surface block h-full rounded-xl border p-5 shadow-[0_1px_3px_rgba(16,24,40,0.06)] transition-colors hover:border-brand-400 ${
+                        active ? 'border-brand-600 ring-brand-600 ring-2' : 'border-line'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className={`mt-[6px] inline-block size-1.5 shrink-0 rounded-full ${CARD_TONE[view]}`} />
+                        <span className="text-muted text-[11px] leading-[1.35] font-semibold tracking-[0.1em] uppercase">{BOARD_VIEW_LABELS[view]}</span>
+                      </div>
+                      <p className="mt-3 text-[30px] leading-none font-semibold tracking-tight tabular-nums">{kpis[view]}</p>
+                      <p className="text-muted mt-2 text-xs">{CARD_HINT[view]}</p>
+                      <p className="text-brand-700 mt-2 text-xs font-semibold">
+                        {active ? 'Shown below · click to show all' : slabs ? 'Click to View Slabs' : 'Click to view'}
+                      </p>
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </SectionCard>
       </div>
 
@@ -143,6 +180,7 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
       </div>
 
       {/* ------------------------------------------ Recalibration Records --- */}
+      <div id="records" className="scroll-mt-6">
       <SectionCard
         title="Recalibration Records"
         accent="grade"
@@ -209,7 +247,7 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
                         <span className={STAGE_CLASS[stageOf(row.state)] ?? ''}>{statusLabel(row.state, row.grade)}</span>
                       </td>
                       <td className={`${td} text-right`}>
-                        <SlabActions editHref={`${APP_ROUTES.recalibrations}/${row.slabId}`} slabId={row.slabId} slabNo={row.slabNo} />
+                        <SlabActions editHref={`${APP_ROUTES.recalibrations}/${row.slabId}`} slabId={row.slabId} slabNo={row.slabNo} canDelete={canDelete} />
                       </td>
                     </tr>
                   ))}
@@ -220,6 +258,7 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
           </>
         )}
       </SectionCard>
+      </div>
     </>
   );
 }

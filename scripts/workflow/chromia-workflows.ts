@@ -29,6 +29,7 @@ import { loadProductionDashboard } from '@/lib/chromia/server/repositories/dashb
 import { loadRecalibrationBoard, loadSlabTrips } from '@/lib/chromia/server/repositories/recalibration-flow-repository';
 import { loadSlabRecord } from '@/lib/chromia/server/repositories/slab-record-repository';
 import { toDateInput, toTimeInput } from '@/lib/chromia/operator-register';
+import { deleteOrderAction, saveOrderAction } from '@/lib/chromia/server/actions/orders';
 
 const TODAY = toPlantDateInput(new Date());
 const RUN = String(Date.now() % 1_000_000).padStart(6, '0');
@@ -68,10 +69,16 @@ async function snapshot() {
     sampleCutting: overall.sampleCutting,
     recalibration: overall.places.RECALIBRATION,
     trimming: overall.places.TRIMMING,
-    ready: board.kpis.ready,
+    // Recalibration Dashboard, OVERALL STATUS (events) …
+    recalibrated: board.kpis.recalibrated,
     sent: board.kpis.sent,
     received: board.kpis.received,
     pending: board.kpis.pending,
+    // … and CURRENT STATUS (slabs, each once).
+    ready: board.kpis.ready,
+    out: board.kpis.out,
+    returned: board.kpis.returned,
+    available: board.kpis.available,
     todayProduced: todays.produced,
   };
 }
@@ -266,27 +273,34 @@ async function main() {
   });
 
   // ── Recalibration: five attempts, then the write-off ──────────────────
-  await step('QC: Grade C → Recalibration — Ready', () => enter(n('5'), { grade: 'C', disposition: 'RECALIBRATION', reason: 'Pinholes' }), { produced: 1, recalibration: 1, ready: 1, todayProduced: 1 });
+  await step('QC: Grade C → Recalibration — Ready', () => enter(n('5'), { grade: 'C', disposition: 'RECALIBRATION', reason: 'Pinholes' }), { produced: 1, recalibration: 1, recalibrated: 1, ready: 1, todayProduced: 1 });
   expect('status', (await statusOf(n('5'))).label, 'Ready for Recalibration');
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const ord = ['1st', '2nd', '3rd', '4th', '5th'][attempt - 1];
-    await step(`Attempt ${attempt}: sent`, () => recalibrationForm(n('5'), { sentDate: TODAY }), { ready: -1, sent: 1, pending: 1 });
+    // Ready is the FIRST send only: a repeat send leaves it as it is.
+    await step(`Attempt ${attempt}: sent`, () => recalibrationForm(n('5'), { sentDate: TODAY }), { ...(attempt === 1 ? { ready: -1 } : {}), sent: 1, pending: 1, out: 1 });
     expect(`attempt ${attempt} out`, await statusOf(n('5')), { status: 'OUT_FOR_RECALIBRATION', location: 'EXTERNAL_FACILITY', label: `Sent for ${ord} Time Recalibration` });
-    await step(`Attempt ${attempt}: received`, () => recalibrationForm(n('5'), { receivedDate: TODAY }), { received: 1, pending: -1 });
+    await step(`Attempt ${attempt}: received`, () => recalibrationForm(n('5'), { receivedDate: TODAY }), { received: 1, pending: -1, out: -1, returned: 1 });
     expect(`attempt ${attempt} back`, await statusOf(n('5')), { status: 'RECEIVED_FROM_RECALIBRATION', location: 'YARD', label: `Received from the ${ord} Time Recalibration` });
-    await step(`Attempt ${attempt}: back on the line`, () => recalibrationForm(n('5'), { inTime: '11:00' }), { recalibration: -1, inProcessing: 1 });
+    // Reprinted: off "Received", on "Available after Recalibration".
+    await step(`Attempt ${attempt}: back on the line`, () => recalibrationForm(n('5'), { inTime: '11:00' }), { recalibration: -1, inProcessing: 1, returned: -1, available: 1 });
     expect(`attempt ${attempt} in processing`, (await statusOf(n('5'))).label, `In Processing — After Attempt ${attempt}`);
     if (attempt < 5) {
-      await step(`Attempt ${attempt}: QC Grade C again — Need the next`, () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1, ready: 1 });
+      await step(`Attempt ${attempt}: QC Grade C again — Need the next`, () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1, recalibrated: 1, available: -1 });
       expect(`after attempt ${attempt}`, (await statusOf(n('5'))).label, `Need ${['2nd', '3rd', '4th', '5th'][attempt - 1]} Time Recalibration`);
     }
   }
-  await step('After the 5th: Grade C again — written off', () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1 });
+  await step('After the 5th: Grade C again — written off', () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1, available: -1 });
+  // The whole history of one slab, five times over: 5 records, 5 sends, 5 receipts.
+  expect('Overall Status counts every attempt of …5', await (async () => {
+    const t = await prisma.chromiaRecalibrationCycle.findMany({ where: { slab: { slabNo: n('5') } } });
+    return [t.length, t.filter((x) => x.sentDate).length, t.filter((x) => x.receivedDate).length];
+  })(), [5, 5, 5]);
   expect('written off', (await statusOf(n('5'))).label, 'Written Off / Waste');
 
-  await step('QC: Grade C → Recalibration (a second slab)', () => enter(n('6'), { grade: 'C', disposition: 'RECALIBRATION', reason: 'Half Print' }), { produced: 1, recalibration: 1, ready: 1, todayProduced: 1 });
-  await step('…sent and received in one save', () => recalibrationForm(n('6'), { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1 });
-  await step('…its new pass, graded A → Stock: cleared into Current Stock', () => recalibrationForm(n('6'), { inTime: '12:00', grade: 'A' }), { recalibration: -1, stock: 1 });
+  await step('QC: Grade C → Recalibration (a second slab)', () => enter(n('6'), { grade: 'C', disposition: 'RECALIBRATION', reason: 'Half Print' }), { produced: 1, recalibration: 1, recalibrated: 1, ready: 1, todayProduced: 1 });
+  await step('…sent and received in one save', () => recalibrationForm(n('6'), { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1, returned: 1 });
+  await step('…its new pass, graded A → Stock: cleared into Current Stock', () => recalibrationForm(n('6'), { inTime: '12:00', grade: 'A' }), { recalibration: -1, stock: 1, returned: -1 });
   expect('cleared', (await statusOf(n('6'))).status, 'IN_STOCK');
   await step('…and dispatched from the Stockyard', () => sent(n('6'), 'DISPATCH'), { stock: -1, dispatched: 1 });
 
@@ -325,7 +339,7 @@ async function main() {
   });
   await step('…dispatched again from the Stockyard', () => sent(n('1'), 'DISPATCH'), { stock: -1, dispatched: 1 });
   await step('Dispatched Edit: Alter From Dispatched → Recalibration — Ready', () =>
-    stockyardEdit(n('1'), { form: 'dispatched', destination: 'RECALIBRATION', alterDate: TODAY }), { dispatched: -1, recalibration: 1, ready: 1 });
+    stockyardEdit(n('1'), { form: 'dispatched', destination: 'RECALIBRATION', alterDate: TODAY }), { dispatched: -1, recalibration: 1, recalibrated: 1, ready: 1 });
   expect('waiting for its first trip', (await statusOf(n('1'))).status, 'GRADED');
 
   // ── Grade C → Trimming (7 Nov 2026) ───────────────────────────────────
@@ -340,7 +354,7 @@ async function main() {
   expect('no stock entry', await prisma.chromiaStockEntry.count({ where: { slab: { slabNo: n('7') } } }), 0);
   await step('Slab Entry Edit: Trimming corrected to Recalibration — leaves Trimming, Ready', async () =>
     saveSlabEntryAction({}, form({ qcMode: 'correct', slabId: await slabId(n('7')), entryDate: TODAY, receivedDate: TODAY, inTime: '09:30', batchNo: BATCH, slabNo: n('7'), baseMaterial: MATERIAL, fileName: DESIGN, thicknessCm: '2', slabRemarks: '', grade: 'C', disposition: 'RECALIBRATION', initialGrade: 'C', initialDisposition: 'TRIMMING', initialReason: '' })),
-    { trimming: -1, recalibration: 1, ready: 1 });
+    { trimming: -1, recalibration: 1, recalibrated: 1, ready: 1 });
   // Sent and received, back on the line, then re-graded C with a forged
   // Trimming: the Recalibration page's Grade C is Recalibration only, so the
   // server sets it — the slab never reaches Trimming.
@@ -348,7 +362,8 @@ async function main() {
     await recalibrationForm(n('7'), { sentDate: TODAY, receivedDate: TODAY });
     await recalibrationForm(n('7'), { inTime: '12:00' });
     return recalibrationForm(n('7'), { grade: 'C', disposition: 'TRIMMING' });
-  }, { sent: 1, received: 1 });
+    // Its 2nd attempt waits: a new record; and it has left "Ready" (first send only).
+  }, { sent: 1, received: 1, recalibrated: 1, ready: -1 });
   expect('the re-grade sent it to Recalibration, not Trimming', (await statusOf(n('7'))).label, 'Need 2nd Time Recalibration');
   expect('its outcome', (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: n('7') }, select: { currentDisposition: true } })).currentDisposition, 'RECALIBRATION');
 
@@ -440,25 +455,25 @@ async function main() {
     select: { attemptNumber: true, sentDate: true, receivedDate: true, restartedAt: true, reason: { select: { name: true } } },
   });
   const e = n('20');
-  await step('QC: Grade C → Recalibration — Ready', () => enter(e, { grade: 'C', disposition: 'RECALIBRATION', reason: 'Pinholes' }), { produced: 1, recalibration: 1, ready: 1, todayProduced: 1 });
-  await step('Edit: Recalibration → Stock (Grade A) — off Recalibration, onto the rack', () => correct(e, 'A', 'STOCK'), { recalibration: -1, ready: -1, stock: 1 });
+  await step('QC: Grade C → Recalibration — Ready', () => enter(e, { grade: 'C', disposition: 'RECALIBRATION', reason: 'Pinholes' }), { produced: 1, recalibration: 1, recalibrated: 1, ready: 1, todayProduced: 1 });
+  await step('Edit: Recalibration → Stock (Grade A) — off Recalibration, onto the rack', () => correct(e, 'A', 'STOCK'), { recalibration: -1, recalibrated: -1, ready: -1, stock: 1 });
   expect('its waiting trip is gone', (await trips(e)).length, 0);
   expect('in stock', (await statusOf(e)).status, 'IN_STOCK');
-  await step('Edit: Stock → Recalibration (Grade C, a new reason) — off the rack, Ready', () => correct(e, 'C', 'RECALIBRATION', 'Half Print'), { stock: -1, recalibration: 1, ready: 1 });
+  await step('Edit: Stock → Recalibration (Grade C, a new reason) — off the rack, Ready', () => correct(e, 'C', 'RECALIBRATION', 'Half Print'), { stock: -1, recalibration: 1, recalibrated: 1, ready: 1 });
   expect('one waiting trip, 1st attempt, with the new reason', (await trips(e)).map((t) => [t.attemptNumber, t.sentDate, t.reason?.name]), [[1, null, 'Half Print']]);
-  await step('Edit: Recalibration → Trimming (Grade C) — no trip back, so Trimming is allowed', () => correct(e, 'C', 'TRIMMING'), { recalibration: -1, ready: -1, trimming: 1 });
+  await step('Edit: Recalibration → Trimming (Grade C) — no trip back, so Trimming is allowed', () => correct(e, 'C', 'TRIMMING'), { recalibration: -1, recalibrated: -1, ready: -1, trimming: 1 });
   await step('Edit: Trimming → Sample Cutting (Grade B)', () => correct(e, 'B', 'SAMPLE_CUTTING'), { trimming: -1, sampleCutting: 1 });
-  await step('Edit: Sample Cutting → Recalibration (Grade C)', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { sampleCutting: -1, recalibration: 1, ready: 1 });
-  await step('…sent for recalibration', () => recalibrationForm(e, { sentDate: TODAY }), { ready: -1, sent: 1, pending: 1 });
-  await step('Edit while it is out: Recalibration → Stock (Grade A) — the trip is undone', () => correct(e, 'A', 'STOCK'), { recalibration: -1, sent: -1, pending: -1, stock: 1 });
+  await step('Edit: Sample Cutting → Recalibration (Grade C)', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { sampleCutting: -1, recalibration: 1, recalibrated: 1, ready: 1 });
+  await step('…sent for recalibration', () => recalibrationForm(e, { sentDate: TODAY }), { ready: -1, sent: 1, pending: 1, out: 1 });
+  await step('Edit while it is out: Recalibration → Stock (Grade A) — the trip is undone', () => correct(e, 'A', 'STOCK'), { recalibration: -1, recalibrated: -1, sent: -1, pending: -1, out: -1, stock: 1 });
   expect('no trip, no attempt counted, not at the facility', [
     (await trips(e)).length,
     (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: e }, select: { recalibrationCount: true, isRecalibrationOut: true } })),
     (await statusOf(e)).location !== 'EXTERNAL_FACILITY',
   ], [0, { recalibrationCount: 0, isRecalibrationOut: false }, true]);
-  await step('Edit: Stock → Recalibration again', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, ready: 1 });
-  await step('…sent and received', () => recalibrationForm(e, { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1 });
-  await step('Edit once it is back: Recalibration → Stock (Grade A) — its next pass, graded', () => correct(e, 'A', 'STOCK'), { recalibration: -1, stock: 1 });
+  await step('Edit: Stock → Recalibration again', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, recalibrated: 1, ready: 1 });
+  await step('…sent and received', () => recalibrationForm(e, { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1, returned: 1 });
+  await step('Edit once it is back: Recalibration → Stock (Grade A) — its next pass, graded', () => correct(e, 'A', 'STOCK'), { recalibration: -1, stock: 1, returned: -1 });
   expect('the trip stays, restarted; the slab is on its 2nd pass, in stock', [
     (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate), Boolean(t.receivedDate), Boolean(t.restartedAt)]),
     (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: e }, select: { currentCycleNumber: true, status: true } })),
@@ -468,7 +483,8 @@ async function main() {
     expect('refused', Boolean(refused.error || refused.fieldErrors), true);
   });
   expect('still in stock', (await statusOf(e)).status, 'IN_STOCK');
-  await step('Edit: Stock → Recalibration on its 2nd pass — the 2nd attempt waits', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, ready: 1 });
+  // Waiting for its 2nd send: a new record, but not "Ready" (first send only).
+  await step('Edit: Stock → Recalibration on its 2nd pass — the 2nd attempt waits', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, recalibrated: 1 });
   expect('2nd attempt waiting', (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate)]), [[1, true], [2, false]]);
   await step('Edit: a dispatched slab keeps its QC — refused, nothing changed', async () => {
     const refused = await correct(n('6'), 'B', 'STOCK');
@@ -483,11 +499,38 @@ async function main() {
   // ── One physical slab: 14567 and 14567-A ──────────────────────────────
   await step('A re-entered slab (…3-A) is the same physical slab, where its latest record is', () => enter(`${n('3')}-A`), { sampleCutting: -1, inProcessing: 1 });
 
+  // ── Who may delete (19 Nov 2026) ────────────────────────────────────────────────
+  // The standalone runs as one local login; these steps run the real actions
+  // as the main ERP's logins (src/lib/rbac.ts, CHROMIA_LOCAL_*).
+  const runAs = (login: Record<string, string>) => {
+    for (const k of ['CHROMIA_LOCAL_ROLE', 'CHROMIA_LOCAL_BRANCH', 'CHROMIA_LOCAL_ALT_ROLE', 'CHROMIA_LOCAL_ALT_BRANCH']) delete process.env[k];
+    Object.assign(process.env, login);
+  };
+  const OPERATOR = { CHROMIA_LOCAL_ROLE: 'CHROMIA' };
+  const GIBIN_IN_CHROMIA = { CHROMIA_LOCAL_ROLE: 'CHROMIA', CHROMIA_LOCAL_ALT_ROLE: 'CHROMIA' };
+  runAs(OPERATOR);
+  await step('Chromia Operator: Delete is refused on the server, nothing moves', async () => {
+    const refused = await deleteSlabRecordAction({}, form({ slabId: await slabId(n('4')), slabNo: n('4') }));
+    expect('refused, and says why', /Chromia Operator login cannot delete a slab record/.test(String(refused.error)), true);
+    expect('the slab is still there', await prisma.chromiaSlab.count({ where: { slabNo: n('4'), deletedAt: null } }), 1);
+  });
+  await step('Chromia Operator: deleting a Trimming record is refused the same way', async () => {
+    const refused = await deleteTrimmingAction({}, form({ id: 'any-trimming-record' }));
+    expect('refused before anything is looked up', /Chromia Operator login cannot delete a Trimming record/.test(String(refused.error)), true);
+  });
+  await step('Chromia Operator: Edit still saves', async () => {
+    const saved = await stockyardEdit(n('4'), { slabRemarks: 'Edited by the operator' });
+    expect('saved', Boolean(saved.savedAt), true);
+  });
+  runAs(GIBIN_IN_CHROMIA);
+
   // ── Delete from any table (change 5, 7 Nov 2026) ─────────────────────
-  await step('Delete: a stocked slab — gone from Current Stock and every count', async () =>
+  await step('Delete (as the Fab & Chromia Head, Chromia job): a stocked slab — gone from Current Stock and every count', async () =>
     deleteSlabRecordAction({}, form({ slabId: await slabId(n('4')), slabNo: n('4') })), { produced: -1, approved: -1, todayProduced: -1 });
   expect('its record and its stock entry are gone', [await prisma.chromiaSlab.count({ where: { slabNo: n('4') } }), await prisma.chromiaStockEntry.count({ where: { slab: { slabNo: n('4') } } })], [0, 0]);
   expect('and from Sent From Stock', n('4') in (await sentFromStock()), false);
+  // That delete ran as the Fab & Chromia Head in his Chromia job; the rest as the local admin.
+  runAs({});
   await step('Delete: a re-entered slab (…3-A) — its earlier entry …3 goes too, so nothing reappears', async () =>
     deleteSlabRecordAction({}, form({ slabId: await slabId(`${n('3')}-A`), slabNo: `${n('3')}-A` })), { produced: -1, inProcessing: -1, todayProduced: -1 });
   expect('both entries gone', await prisma.chromiaSlab.count({ where: { slabNo: { in: [n('3'), `${n('3')}-A`] } } }), 0);
@@ -498,6 +541,61 @@ async function main() {
     const at = created.findIndex((s) => s.slabNo === gone);
     if (at >= 0) created.splice(at, 1);
   }
+
+  // ── Orders: who may do what (19 Nov 2026) ─────────────────────────────
+  // Orders read and write only chromia_order: no slab count moves (step()).
+  const orderNamed = (designName: string) => prisma.chromiaOrder.findFirst({ where: { designName } });
+  const designA = `WF${RUN} Design A`;
+  const designB = `WF${RUN} Design B`;
+  runAs({});
+  await step('Orders (admin): a new order still needs its customer name', async () => {
+    const refused = await saveOrderAction({}, form({ designName: designA, quantity: '5' }));
+    expect('asks for the customer', Boolean(refused.fieldErrors?.customerName), true);
+  });
+  await step('Orders (admin): saved with its customer and Order Initiated By', async () => {
+    const saved = await saveOrderAction({}, form({ customerName: `WF${RUN} Customer`, requestedBy: 'Sales desk', designName: designA, quantity: '5' }));
+    expect('saved', Boolean(saved.savedAt), true);
+  });
+  runAs(OPERATOR);
+  await step('Orders (Chromia Operator): a new order saves with no customer name', async () => {
+    const saved = await saveOrderAction({}, form({ designName: designB, quantity: '11', requestedDeliveryDate: TODAY }));
+    expect('saved', Boolean(saved.savedAt), true);
+    expect('no customer, no initiator', await orderNamed(designB).then((o) => [o?.customerName, o?.requestedBy, o?.quantity]), ['', null, 11]);
+  });
+  await step('Orders (Chromia Operator): a customer name or initiator in the request is ignored', async () => {
+    const before = await orderNamed(designA);
+    const saved = await saveOrderAction({}, form({
+      id: before!.id, customerName: 'Forged Customer', requestedBy: 'Forged', designName: designA, quantity: '5',
+      requestedDeliveryDate: TODAY, actualDeliveryDate: TODAY,
+    }));
+    expect('saved', Boolean(saved.savedAt), true);
+    const after = await orderNamed(designA);
+    expect('customer and initiator kept; both delivery dates saved', [after?.customerName, after?.requestedBy, Boolean(after?.requestedDeliveryDate), Boolean(after?.actualDeliveryDate)],
+      [`WF${RUN} Customer`, 'Sales desk', true, true]);
+  });
+  await step('Orders (Chromia Operator): Delete is refused on the server', async () => {
+    const order = await orderNamed(designA);
+    const refused = await deleteOrderAction({}, form({ id: order!.id }));
+    expect('refused, and says why', /Chromia Operator login cannot delete an order/.test(String(refused.error)), true);
+    expect('still there', await prisma.chromiaOrder.count({ where: { id: order!.id } }), 1);
+  });
+  runAs(GIBIN_IN_CHROMIA);
+  await step('Orders (Fab & Chromia Head): adds the customer to the operator\'s order', async () => {
+    const order = await orderNamed(designB);
+    const saved = await saveOrderAction({}, form({ id: order!.id, customerName: `WF${RUN} Late Customer`, designName: designB, quantity: '11' }));
+    expect('saved', Boolean(saved.savedAt), true);
+    expect('customer now set', (await orderNamed(designB))?.customerName, `WF${RUN} Late Customer`);
+  });
+  await step('Orders (Fab & Chromia Head): deletes both orders, for good', async () => {
+    for (const design of [designA, designB]) {
+      const order = await orderNamed(design);
+      const done = await deleteOrderAction({}, form({ id: order!.id }));
+      expect(`${design} deleted`, Boolean(done.deletedAt), true);
+    }
+    expect('no workflow order left', await prisma.chromiaOrder.count({ where: { designName: { startsWith: `WF${RUN}` } } }), 0);
+    expect('each delete is in the audit log', await prisma.chromiaAuditLog.count({ where: { entity: 'Order', action: 'DELETE', changes: { path: ['designName'], string_starts_with: `WF${RUN}` } } }), 2);
+  });
+  runAs({});
 
   // ── Clean up: the database is back where it started ────────────────────
   for (const slab of [...created].reverse()) {

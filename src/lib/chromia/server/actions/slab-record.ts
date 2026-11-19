@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { requireActingUser } from '@/lib/chromia/current-user';
+import { requireActingUser, requireChromiaDeleter } from '@/lib/chromia/current-user';
 import { isAppError } from '@/lib/chromia/errors';
 import { combineDateAndTime } from '@/lib/chromia/operator-register';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
@@ -97,6 +97,10 @@ export async function updateSlabRecordAction(
  * showed on every table but refused an operator. requireActingUser still
  * holds whatever page the action is posted from: only a Chromia login (the
  * line, the Plant In-Charge, an admin) may delete. The button asks first.
+ *
+ * 19 Nov 2026: every Chromia login BUT the Chromia Operator (the owner:
+ * chromia@thepacific.group edits, and does not delete). requireChromiaDeleter
+ * refuses it here, whatever page — or request — the action comes from.
  */
 export async function deleteSlabRecordAction(
   _previousState: SlabRecordFormState,
@@ -112,7 +116,7 @@ export async function deleteSlabRecordAction(
   }
 
   try {
-    const user = await requireActingUser();
+    const user = await requireChromiaDeleter('delete a slab record');
     await deleteSlabRecord(parsed.data, user.id);
   } catch (error) {
     if (isAppError(error)) {

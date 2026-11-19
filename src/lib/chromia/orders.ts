@@ -29,6 +29,35 @@ export const RECENT_ORDERS_LIMIT = 10;
 
 /** The Dashboard's Pending Orders KPI opens this view. */
 export const PENDING_VIEW = 'pending' as const;
+/** …and Completed Orders this one (19 Nov 2026). */
+export const COMPLETED_VIEW = 'completed' as const;
+export const ORDER_VIEWS = [PENDING_VIEW, COMPLETED_VIEW] as const;
+export type OrderView = (typeof ORDER_VIEWS)[number];
+
+export const ORDER_VIEW_LABELS: Record<OrderView, string> = {
+  pending: 'Pending Orders',
+  completed: 'Completed Orders',
+};
+
+/** The view a query names, or null. */
+export function parseOrderView(value: string | string[] | undefined): OrderView | null {
+  const raw = (Array.isArray(value) ? value[0] : value) ?? '';
+  return (ORDER_VIEWS as readonly string[]).includes(raw) ? (raw as OrderView) : null;
+}
+
+/** "Requested By", renamed for every role (19 Nov 2026). The column is still requested_by. */
+export const ORDER_INITIATED_BY_LABEL = 'Order Initiated By';
+
+/** Shown, to the roles that see customers, for an order an operator entered without one. */
+export const NO_CUSTOMER_LABEL = 'Customer not entered';
+
+/**
+ * Quantity of Slabs added up over exactly these rows (the KPI lists' Total
+ * row, on screen and in the Excel). An order with no quantity adds nothing.
+ */
+export function quantityTotal(rows: readonly { quantity: number | null }[]): number {
+  return rows.reduce((sum, row) => sum + (row.quantity ?? 0), 0);
+}
 
 export type OrderStatus = 'PENDING' | 'COMPLETED';
 
@@ -79,8 +108,9 @@ const dayField = z
 
 export const orderFormSchema = z
   .object({
-    customerName: z.string().trim().min(1, 'Enter the customer name').max(120, 'Customer name is too long'),
-    requestedBy: optionalText(120, 'Requested By'),
+    // Required for the roles that see it — parseOrderForm asks (19 Nov 2026).
+    customerName: z.string().trim().max(120, 'Customer name is too long'),
+    requestedBy: optionalText(120, ORDER_INITIATED_BY_LABEL),
     designName: optionalText(120, 'Design name'),
     baseMaterialName: optionalText(120, 'Base material name'),
     printingFileName: optionalText(160, 'Printing file name'),
@@ -150,14 +180,21 @@ export const ORDER_FORM_FIELDS = [
 /**
  * Read the form. Only the customer's name is required; every other field may
  * be left empty and filled in later. A date is the plant's day it names.
+ *
+ * `withCustomer: false` is the Chromia Operator's form (19 Nov 2026), which
+ * has no Customer Name: the name is then not asked for here, and the action
+ * keeps whatever the order already had (an operator's new order has none,
+ * until a role that sees customers enters it).
  */
 export function parseOrderForm(
   input: Partial<Record<(typeof ORDER_FORM_FIELDS)[number], string>>,
+  { withCustomer = true }: { withCustomer?: boolean } = {},
 ): { ok: true; values: OrderValues } | { ok: false; fieldErrors: Record<string, string[] | undefined> } {
   const parsed = orderFormSchema.safeParse(
     Object.fromEntries(ORDER_FORM_FIELDS.map((key) => [key, input[key] ?? (key === 'thicknessUnit' ? 'cm' : '')])),
   );
   if (!parsed.success) return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  if (withCustomer && parsed.data.customerName === '') return { ok: false, fieldErrors: { customerName: ['Enter the customer name'] } };
   const v = parsed.data;
   const orNull = (s: string) => (s === '' ? null : s);
   const day = (s: string) => (s === '' ? null : plantDayStart(s));
@@ -188,3 +225,76 @@ export function parseOrderForm(
 
 /** A stored date as the form's yyyy-mm-dd, '' for none. */
 export const dayInput = (date: Date | null | undefined): string => (date ? toPlantDateInput(date) : '');
+
+/* ── The KPI lists' Excel (19 Nov 2026) ───────────────────────────────── */
+
+/** The columns of a Pending or Completed Orders download — the table's, in its order, without the Action. */
+export const ORDER_EXPORT_COLUMNS = [
+  'S.No.',
+  'Customer Name',
+  ORDER_INITIATED_BY_LABEL,
+  'Design Name',
+  'Base Material Name',
+  'Printing File Name',
+  'Quantity of Slabs',
+  'Thickness of Slabs',
+  'Finishing Type',
+  'Requested Delivery Date',
+  'Actual Delivery Date',
+  'Person In-Charge Name',
+  'Remarks',
+  'Status',
+] as const;
+
+export interface OrderExportRow {
+  customerName: string;
+  requestedBy: string | null;
+  designName: string | null;
+  baseMaterialName: string | null;
+  printingFileName: string | null;
+  quantity: number | null;
+  thicknessMm: number | null;
+  finishingType: string | null;
+  requestedDeliveryDate: Date | null;
+  actualDeliveryDate: Date | null;
+  personInCharge: string | null;
+  remarks: string | null;
+  status: OrderStatus;
+}
+
+/**
+ * The download's rows: exactly the list shown, in its order and with its
+ * S.No. (counting down), then the Total row under Quantity of Slabs.
+ * `thickness` and `day` format as the screen does.
+ */
+export function orderExportMatrix(
+  rows: readonly OrderExportRow[],
+  format: { thickness: (mm: number) => string; day: (d: Date) => string },
+): { body: (string | number)[][]; total: (string | number)[] } {
+  const serials = descendingSerials(rows.length);
+  const body = rows.map((row, i) => [
+    serials[i]!,
+    row.customerName || NO_CUSTOMER_LABEL,
+    row.requestedBy ?? '',
+    row.designName ?? '',
+    row.baseMaterialName ?? '',
+    row.printingFileName ?? '',
+    row.quantity ?? '',
+    row.thicknessMm === null ? '' : format.thickness(row.thicknessMm),
+    row.finishingType ?? '',
+    row.requestedDeliveryDate ? format.day(row.requestedDeliveryDate) : '',
+    row.actualDeliveryDate ? format.day(row.actualDeliveryDate) : '--',
+    row.personInCharge ?? '',
+    row.remarks ?? '',
+    ORDER_STATUS_LABELS[row.status],
+  ]);
+  const total: (string | number)[] = ORDER_EXPORT_COLUMNS.map((label) =>
+    label === 'S.No.' ? 'Total' : label === 'Quantity of Slabs' ? quantityTotal(rows) : '',
+  );
+  return { body, total };
+}
+
+/** `chromia-pending-orders_2026-11-19.xlsx` — the list and the plant day it was taken. */
+export function orderExportFileName(view: OrderView, now: Date = new Date()): string {
+  return `chromia-${view}-orders_${toPlantDateInput(now)}.xlsx`;
+}

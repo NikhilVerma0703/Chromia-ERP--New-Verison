@@ -42,20 +42,28 @@ export function writeStyledWorkbook({
   sheetName,
   columns,
   rows,
+  footer,
 }: {
   sheetName: string;
   columns: ExportColumn[];
   /** One array per row, already in column order. */
   rows: (string | number)[][];
+  /** A last row in bold, e.g. a Total (19 Nov 2026). Left out of the filter. */
+  footer?: (string | number)[];
 }): Buffer {
-  const matrix = [columns.map((column) => column.label), ...rows];
+  const matrix = [columns.map((column) => column.label), ...rows, ...(footer ? [footer] : [])];
   const sheet = XLSX.utils.aoa_to_sheet(matrix);
 
   columns.forEach((column, columnIndex) => {
     for (let rowIndex = 0; rowIndex < matrix.length; rowIndex += 1) {
       const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
       const cell = sheet[address] ?? { t: 's', v: '' };
-      cell.s = rowIndex === 0 ? headerStyle(column) : bodyStyle(column, rowIndex % 2 === 0);
+      const isFooter = Boolean(footer) && rowIndex === matrix.length - 1;
+      cell.s = rowIndex === 0
+        ? headerStyle(column)
+        : isFooter
+          ? { ...bodyStyle(column, false), font: { sz: 10, bold: true, color: { rgb: '101828' } }, border: { ...BORDER, top: { style: 'medium', color: { rgb: '101828' } } } }
+          : bodyStyle(column, rowIndex % 2 === 0);
       sheet[address] = cell;
     }
   });
@@ -66,7 +74,7 @@ export function writeStyledWorkbook({
   sheet['!autofilter'] = {
     ref: XLSX.utils.encode_range({
       s: { r: 0, c: 0 },
-      e: { r: Math.max(matrix.length - 1, 1), c: columns.length - 1 },
+      e: { r: Math.max(matrix.length - 1 - (footer ? 1 : 0), 1), c: columns.length - 1 },
     }),
   };
 

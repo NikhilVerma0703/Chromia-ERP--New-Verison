@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { allowedDispositions, DISPOSITION_LABELS } from '@/lib/chromia/constants/process-stages';
-import { requireActingUser } from '@/lib/chromia/current-user';
+import { requireActingUser, requireChromiaDeleter } from '@/lib/chromia/current-user';
 import { isAppError } from '@/lib/chromia/errors';
 import { combineDateAndTime } from '@/lib/chromia/operator-register';
 import { toPlantDateInput } from '@/lib/chromia/plant-time';
@@ -279,7 +279,9 @@ export async function deleteTrimmingAction(_previous: TrimmingFormState, formDat
   const id = text(formData, 'id');
   if (!id) return { error: 'This record could not be identified. Reload Trimming and try again.' };
   try {
-    const user = await requireActingUser();
+    // Not the Chromia Operator's (the owner, 19 Nov 2026): it deletes, as
+    // the slab Delete does, so it asks the same rule.
+    const user = await requireChromiaDeleter('delete a Trimming record');
     const done = await deleteTrimming(id, user.id);
     refresh();
     return { savedAt: Date.now(), saved: [done] };

@@ -44,6 +44,11 @@ export interface DispatchedFilters {
   slabNo: string;
   baseMaterial: string;
   fileName: string;
+  /**
+   * The Dispatched Slabs table's page, from 1 (19 Nov 2026). Not a filter: it
+   * is not in buildDispatchedQuery, so a new search starts on page 1.
+   */
+  page: number;
 }
 
 function first(value: string | string[] | undefined): string {
@@ -67,6 +72,7 @@ export function parseDispatchedFilters(params: RawSearchParams): DispatchedFilte
     slabNo: first(params.slabNo).slice(0, 60),
     baseMaterial: first(params.baseMaterial).slice(0, 120),
     fileName: first(params.fileName).slice(0, 120),
+    page: /^\d{1,6}$/.test(first(params.page)) ? Math.max(1, Number(first(params.page))) : 1,
   };
 }
 
@@ -181,5 +187,15 @@ export function buildDispatchedQuery(f: DispatchedFilters): string {
     fileName: f.fileName,
   };
   for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
+  return params.toString();
+}
+
+/** The table's page size: the same 25 rows a page as Slab Records (19 Nov 2026). */
+export const DISPATCHED_PAGE_SIZE = 25;
+
+/** The query string for one page of the table: the filters, and the page. */
+export function dispatchedPageQuery(f: DispatchedFilters, page: number): string {
+  const params = new URLSearchParams(buildDispatchedQuery(f));
+  if (page > 1) params.set('page', String(page));
   return params.toString();
 }

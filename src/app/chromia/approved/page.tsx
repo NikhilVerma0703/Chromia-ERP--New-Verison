@@ -16,6 +16,7 @@ import { requirePageUser } from '@/lib/pageUser';
 
 import { ApprovedFindASlab } from './find-a-slab';
 import { TakePhotoLink, ViewPhotoButton } from './photo-buttons';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Approved Slabs' };
 export const dynamic = 'force-dynamic';
@@ -46,7 +47,10 @@ const { th, td, tdMuted, tdNum } = dataTable;
  * Approved, with the camera, upload and crop underneath.
  */
 export default async function ApprovedSlabsPage({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const filters = parseApprovedFilters(await searchParams);
   const filtered = hasApprovedFilters(filters);
 
@@ -132,7 +136,7 @@ export default async function ApprovedSlabsPage({ searchParams }: { searchParams
                         {slab.photo ? <ViewPhotoButton photoId={slab.photo.id} slabNo={slab.slabNo} /> : <TakePhotoLink href={open} slabNo={slab.slabNo} />}
                       </td>
                       <td className={`${td} text-right`}>
-                        <SlabActions editHref={`${open}/edit`} slabId={slab.slabId} slabNo={slab.slabNo} />
+                        <SlabActions editHref={`${open}/edit`} slabId={slab.slabId} slabNo={slab.slabNo} canDelete={canDelete} />
                       </td>
                     </tr>
                   );

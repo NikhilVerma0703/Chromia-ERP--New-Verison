@@ -11,7 +11,7 @@
 // STORE_KEEPER, VIEWER); those are not roles in this ERP and are NOT added to
 // the Role enum — they collapse onto the two tiers below, which is all the
 // module's screens actually distinguish.
-import { rankOf, ROLE_RANK } from "../roles.ts";
+import { isSecondJob, rankOf, ROLE_RANK } from "../roles.ts";
 // The plant table, import-free but for roles.ts, so this module stays as
 // importable by `node --test` as it was.
 import { PLANT_INCHARGE } from "../plantAccess.ts";
@@ -52,4 +52,51 @@ export function chromiaTierOf(user: unknown): ChromiaTier | null {
  */
 export function chromiaCanManage(user: unknown): boolean {
   return chromiaTierOf(user) === "ADMIN";
+}
+
+/**
+ * The Chromia line login itself — "Chromia Operator" in Users & Roles: role
+ * CHROMIA held as the login's OWN, main job (chromia@thepacific.group, "Chromia
+ * Line", scripts/0118 in the main ERP).
+ *
+ * NOT a manager who holds CHROMIA as a SECOND job. Gibin (gibin@, "Fab &
+ * Chromia Head") is a Line Manager on Fabrication with Chromia as his second
+ * job; while he works in Chromia his session carries the very same role,
+ * CHROMIA, with that pair as his altRole/altBranch (lib/roleContext.ts
+ * applyRoleContext in the main ERP), so the role alone cannot tell the two
+ * apart — isSecondJob can, and it is the test lib/roles.ts already uses to give
+ * that job its manager's name ("Chromia Manager").
+ */
+export function isChromiaLineOperator(user: unknown): boolean {
+  if (!user) return false;
+  const u = user as { role?: string | null; branch?: string | null; altRole?: string | null; altBranch?: string | null };
+  return String(u.role ?? "") === "CHROMIA" && !isSecondJob(u, u.role, u.branch);
+}
+
+/**
+ * May this login permanently delete a slab record (or a Trimming record)?
+ * Asked by every slab table to draw the Delete button, and by the delete
+ * actions themselves (requireChromiaDeleter in current-user.ts), so a request
+ * sent without the button is refused the same way.
+ *
+ * The owner, 19 Nov 2026: the Chromia Operator (chromia@thepacific.group) may
+ * edit but not delete; every role above it keeps Delete — admins, the Plant
+ * In-Charge, Line Managers and In-Charges of the Chromia branch, and the Fab &
+ * Chromia Head (gibin@) in his Chromia job. Before that (17 Nov 2026) every
+ * Chromia login could delete.
+ */
+export function chromiaCanDeleteSlab(user: unknown): boolean {
+  return chromiaTierOf(user) !== null && !isChromiaLineOperator(user);
+}
+
+/**
+ * Full Orders access (19 Nov 2026, change 4 of that round): the Dashboard
+ * (customer search, KPIs and their lists, the Excel downloads), Customer
+ * Name and Order Initiated By, and Delete. Every Chromia login but the
+ * Chromia Operator — the same line as slab Delete (chromiaCanDeleteSlab), so
+ * the Fab & Chromia Head (gibin@) in his Chromia job has all of it. The
+ * operator keeps the Order Entry form and Edit, without those two fields.
+ */
+export function chromiaHasFullOrderAccess(user: unknown): boolean {
+  return chromiaCanDeleteSlab(user);
 }

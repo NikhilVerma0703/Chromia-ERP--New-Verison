@@ -18,7 +18,7 @@
  */
 import { currentUser } from "@/lib/rbac";
 import { AppError, ErrorCode } from "./errors";
-import { chromiaCanManage, chromiaTierOf } from "./tier";
+import { chromiaCanDeleteSlab, chromiaCanManage, chromiaTierOf } from "./tier";
 
 export interface ActingUser {
   id: string;
@@ -90,6 +90,31 @@ export async function requireChromiaAdmin(doing: string): Promise<ActingUser> {
   const user = await requireActingUser();
   if (!chromiaCanManage(await currentUser())) {
     throw new AppError(ErrorCode.FORBIDDEN, `Only an admin can ${doing}.`, 403);
+  }
+  return user;
+}
+
+/**
+ * `requireActingUser`, and a login that may delete (chromiaCanDeleteSlab) —
+ * for permanently deleting a slab record or a Trimming record (19 Nov 2026).
+ *
+ * The Chromia Operator (chromia@thepacific.group, role CHROMIA as its own job)
+ * edits but does not delete; every role above it does, the Fab & Chromia Head
+ * (gibin@) in his Chromia job included. Asked HERE, in the actions, and not
+ * only by the pages that hide the button: a server action can be posted
+ * without the button, from any page, so this is what actually refuses it.
+ *
+ * An AppError, so each action's catch shows the sentence instead of an error
+ * page. `doing` completes it: "The Chromia Operator login cannot <doing> …".
+ */
+export async function requireChromiaDeleter(doing: string): Promise<ActingUser> {
+  const user = await requireActingUser();
+  if (!chromiaCanDeleteSlab(await currentUser())) {
+    throw new AppError(
+      ErrorCode.FORBIDDEN,
+      `The Chromia Operator login cannot ${doing}. Ask the In-Charge or an admin.`,
+      403,
+    );
   }
   return user;
 }

@@ -15,6 +15,7 @@ import { requirePageUser } from '@/lib/pageUser';
 import { DeleteTrimmingButton } from './delete-trimming-button';
 import { TrimmingSlabLink } from './trimming-slab-link';
 import { WithoutPrintingForm } from './without-printing-form';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Trimming' };
 export const dynamic = 'force-dynamic';
@@ -50,7 +51,10 @@ const STAGE_CLASS: Record<TrimmingStage, string> = {
  * B. Send & Receive, C. Update Slab Details, D. QC Report — as Edit does.
  */
 export default async function TrimmingPage() {
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const [rows, baseMaterials, batchNos] = await Promise.all([listTrimmingRecords(), loadBaseMaterialNames(), loadRecentBatchNos()]);
 
   return (
@@ -121,11 +125,11 @@ export default async function TrimmingPage() {
                           table; a slab without design printing not yet graded has no slab
                           record — its Trimming record is what is deleted. */}
                       {row.slabId ? (
-                        <SlabActions editHref={`${APP_ROUTES.trimming}/${row.id}`} slabId={row.slabId} slabNo={row.slabNo} />
+                        <SlabActions editHref={`${APP_ROUTES.trimming}/${row.id}`} slabId={row.slabId} slabNo={row.slabNo} canDelete={canDelete} />
                       ) : (
                         <div className="flex justify-end gap-2">
                           <EditLink href={`${APP_ROUTES.trimming}/${row.id}`} slabNo={row.slabNo} />
-                          <DeleteTrimmingButton id={row.id} slabNo={row.slabNo} removesRecord />
+                          {canDelete && <DeleteTrimmingButton id={row.id} slabNo={row.slabNo} removesRecord />}
                         </div>
                       )}
                     </td>

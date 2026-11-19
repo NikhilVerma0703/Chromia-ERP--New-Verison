@@ -3,8 +3,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  BOARD_VIEW_LABELS,
+  BOARD_VIEWS,
   boardKpis,
   boardRows,
+  CURRENT_VIEWS,
+  currentPositionOf,
+  OVERALL_VIEWS,
   boardSlabWhere,
   buildBoardQuery,
   hasBoardFilters,
@@ -34,25 +39,77 @@ const board: BoardSlab[] = [
   { id: 'clearedA', disposition: 'STOCK', writtenOff: false, trips: [trip(1, '2026-08-10', '2026-08-15', '2026-08-16')] },
 ];
 
-describe('Recalibration board — counting (27 Oct 2026)', () => {
-  it('Ready counts slabs; Sent, Received and Pending count trips; Pending = Sent − Received', () => {
+describe('Recalibration Dashboard — the eight KPIs (19 Nov 2026)', () => {
+  it('has OVERALL STATUS and CURRENT STATUS, four cards each, named as asked', () => {
+    expect(OVERALL_VIEWS.map((v) => BOARD_VIEW_LABELS[v])).toEqual([
+      'Total Recalibrated Slabs',
+      'Total Slabs Sent for Recalibration',
+      'Total Slabs Received from Recalibration',
+      'Total Pending Slabs from Recalibration',
+    ]);
+    expect(CURRENT_VIEWS.map((v) => BOARD_VIEW_LABELS[v])).toEqual([
+      'Ready for Recalibration',
+      'Sent for Recalibration',
+      'Received from Recalibration',
+      'Available Slabs after Recalibration',
+    ]);
+  });
+
+  it('OVERALL STATUS counts every event, repeat attempts included; Pending = Sent − Received', () => {
     const kpis = boardKpis(board);
-    // ready: 'ready' (never sent) and 'need2' (waiting for its 2nd trip).
-    expect(kpis.ready).toBe(2);
-    // sent trips: out1, back1, inprod, need2#1, out2#1, out2#2, clearedA = 7.
+    // records: ready 1, out1 1, back1 1, inprod 1, need2 2, out2 2, clearedA 1 = 9.
+    expect(kpis.recalibrated).toBe(9);
+    // sent: out1, back1, inprod, need2#1, out2#1, out2#2, clearedA = 7.
     expect(kpis.sent).toBe(7);
-    // received trips: back1, inprod, need2#1, out2#1, clearedA = 5.
+    // received: back1, inprod, need2#1, out2#1, clearedA = 5.
     expect(kpis.received).toBe(5);
     expect(kpis.pending).toBe(2);
     expect(kpis.pending).toBe(kpis.sent - kpis.received);
   });
 
-  it('each card lists exactly what it counts', () => {
+  it('CURRENT STATUS counts slabs where they are now, each once', () => {
     const kpis = boardKpis(board);
-    expect(boardRows(board, 'ready')).toHaveLength(kpis.ready);
-    expect(boardRows(board, 'sent')).toHaveLength(kpis.sent);
-    expect(boardRows(board, 'received')).toHaveLength(kpis.received);
-    expect(boardRows(board, 'pending')).toHaveLength(kpis.pending);
+    // Ready: never sent — 'ready' only; 'need2' waits for its 2nd send and is in no card.
+    expect(kpis.ready).toBe(1);
+    // Sent now: out1 (1st attempt) and out2 (2nd attempt).
+    expect(kpis.out).toBe(2);
+    // Received, not yet reprinted: back1.
+    expect(kpis.returned).toBe(1);
+    // Reprinted, awaiting QC: inprod.
+    expect(kpis.available).toBe(1);
+    expect(Object.fromEntries(board.map((s) => [s.id, currentPositionOf(s)]))).toEqual({
+      ready: 'ready', out1: 'out', back1: 'returned', inprod: 'available', need2: null, out2: 'out', clearedA: null,
+    });
+    // No slab in two cards.
+    const ids = CURRENT_VIEWS.flatMap((v) => boardRows(board, v).map((r) => r.slabId));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('the owner\'s examples: 11 first attempts + 5 repeats = 16; 3 sent, 2 received, 1 reprinted → Available 1', () => {
+    const many: BoardSlab[] = [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `once${i}`, disposition: 'STOCK', writtenOff: false, trips: [trip(1, '2026-09-01', '2026-09-05', '2026-09-06')] })),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: `twice${i}`, disposition: 'STOCK', writtenOff: false,
+        trips: [trip(1, '2026-09-01', '2026-09-05', '2026-09-06'), trip(2, '2026-09-10', '2026-09-15', '2026-09-16')],
+      })),
+    ];
+    expect(boardKpis(many).recalibrated).toBe(16);
+    expect(boardKpis(many).sent).toBe(16);
+
+    const three: BoardSlab[] = [
+      { id: 'still-out', disposition: 'RECALIBRATION', writtenOff: false, trips: [trip(1, '2026-11-01')] },
+      { id: 'back', disposition: 'RECALIBRATION', writtenOff: false, trips: [trip(1, '2026-11-01', '2026-11-05')] },
+      { id: 'reprinted', disposition: null, writtenOff: false, trips: [trip(1, '2026-11-01', '2026-11-05', '2026-11-06')] },
+    ];
+    const k = boardKpis(three);
+    expect([k.sent, k.received, k.out, k.returned, k.available]).toEqual([3, 2, 1, 1, 1]);
+    // Available = received this cycle (2) − still waiting for reprinting (1).
+    expect(k.available).toBe(k.received - k.returned);
+  });
+
+  it('each card lists exactly what it counts — all eight', () => {
+    const kpis = boardKpis(board);
+    for (const view of BOARD_VIEWS) expect(boardRows(board, view), view).toHaveLength(kpis[view]);
     expect(boardRows(board, 'pending')).toEqual([
       { slabId: 'out1', attemptNumber: 1 },
       { slabId: 'out2', attemptNumber: 2 },
@@ -122,7 +179,11 @@ describe('Recalibration page and the unified form', () => {
     expect(titles).toEqual(['Dashboard', 'Recalibration Records']);
     expect(page.indexOf('<RecalibrationFindASlab')).toBeGreaterThan(page.indexOf('title="Dashboard"'));
     expect(page.indexOf('title="Recalibration Records"')).toBeGreaterThan(page.indexOf('<RecalibrationFindASlab'));
-    expect(page).toMatch(/BOARD_VIEWS\.map\(\(view\) => \{[\s\S]{0,200}<Link\s+key=\{view\}\s+href=\{cardHref\(view\)\}/);
+    // Two sections of four cards, every card a link to its own rows (19 Nov 2026).
+    expect(page).toMatch(/\['OVERALL STATUS', [^\n]+, OVERALL_VIEWS\],\n\s+\['CURRENT STATUS', [^\n]+, CURRENT_VIEWS\],/);
+    expect(page).toMatch(/views\.map\(\(view\) => \{[\s\S]{0,300}<Link\s+key=\{view\}\s+href=\{cardHref\(view\)\}/);
+    expect(page).toMatch(/slabs \? 'Click to View Slabs' : 'Click to view'/);
+    expect(page).toMatch(/<div id="records" className="scroll-mt-6">/);
   });
 
   it('lists the fourteen columns in exactly the order asked for, the Slab No. bold, then Action (28 Oct 2026)', () => {

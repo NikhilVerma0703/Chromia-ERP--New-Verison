@@ -7,6 +7,7 @@ import {
   dispatchDateWhere,
   dispatchMonthOptions,
   dispatchWindows,
+  dispatchedPageQuery,
   dispatchedSlabWhere,
   hasDispatchedFilters,
   monthLabel,
@@ -99,6 +100,28 @@ describe('Dispatched → Find a Slab: dispatch-date filters (27 Oct 2026)', () =
   });
 });
 
+describe('Dispatched → the table\'s pages (19 Nov 2026)', () => {
+  it('reads the page from the query, 1 when missing or nonsense', () => {
+    expect(parseDispatchedFilters({}).page).toBe(1);
+    expect(parseDispatchedFilters({ page: '3' }).page).toBe(3);
+    expect(parseDispatchedFilters({ page: '0' }).page).toBe(1);
+    expect(parseDispatchedFilters({ page: 'x' }).page).toBe(1);
+    expect(parseDispatchedFilters({ page: '-2' }).page).toBe(1);
+  });
+
+  it('keeps the filters on another page, and a new search starts on page 1', () => {
+    const f = parseDispatchedFilters({ range: 'LAST_MONTH', batchNo: '105', page: '4' });
+    const q = new URLSearchParams(dispatchedPageQuery(f, 5));
+    expect(q.get('range')).toBe('LAST_MONTH');
+    expect(q.get('batchNo')).toBe('105');
+    expect(q.get('page')).toBe('5');
+    expect(new URLSearchParams(dispatchedPageQuery(f, 1)).get('page')).toBeNull();
+    // The page is not a filter: the form's query has none, so Apply starts again.
+    expect(buildDispatchedQuery(f)).not.toContain('page=');
+    expect(hasDispatchedFilters(parseDispatchedFilters({ page: '2' }))).toBe(false);
+  });
+});
+
 describe('Dispatched page (27 Oct 2026)', () => {
   const page = read('src/app/chromia/dispatch/page.tsx');
   const form = read('src/app/chromia/dispatch/find-a-slab.tsx');
@@ -152,12 +175,38 @@ describe('Dispatched page (27 Oct 2026)', () => {
   });
 
   it('counts each dispatched slab once, the same way for the KPIs and the table', () => {
-    expect(repo).toMatch(/async function countDispatchedSlabs[\s\S]{0,300}distinct: \['slabId'\]/);
-    // Each physical slab once (change 10).
-    expect(repo).toMatch(/where: \{ \.\.\.LIVE, \.\.\.where, slab: await physicalSlabWhere\(\) \},/);
-    const list = repo.slice(repo.indexOf('export async function listDispatchedSlabs('));
-    expect(list).toMatch(/distinct: \['slabId'\]/);
-    expect(repo).toMatch(/countDispatchedSlabs\(\{\}\),/);
+    // The KPIs count DISTINCT slabs, from one read of every dispatch of a
+    // physical slab (19 Nov 2026; it was three reads).
+    const kpis = repo.slice(repo.indexOf('async function kpisFrom('));
+    expect(kpis).toMatch(/where: \{ slab: physical \},/);
+    expect(kpis).toMatch(/total: new Set\(dispatches\.map\(\(d\) => d\.slabId\)\)\.size,/);
+    // The table keeps each slab once, with its latest dispatch.
+    const keys = repo.slice(repo.indexOf('async function rowKeys('));
+    expect(keys).toMatch(/orderBy: \[\{ slabId: 'asc' \}, \{ dispatchDate: 'desc' \}, \{ createdAt: 'desc' \}\]/);
+    expect(keys).toMatch(/if \(seen\.has\(d\.slabId\)\) continue;/);
+    // Each physical slab once (change 10) — asked ONCE per page load and shared.
+    const load = repo.slice(repo.indexOf('export async function loadDispatchedPage('));
+    expect(load.match(/physicalSlabWhere\(\)/g)?.length).toBe(1);
+    expect(load).toMatch(/kpisFrom\(physical, now\),[\s\S]{0,80}rowKeys\(filters, now, physical\)/);
+  });
+
+  it('draws the table a page at a time, 25 rows as Slab Records does, and keeps the filters on every page (19 Nov 2026)', () => {
+    expect(read('src/lib/chromia/dispatched-filters.ts')).toMatch(/export const DISPATCHED_PAGE_SIZE = 25;/);
+    expect(page).toMatch(/await loadDispatchedPage\(filters, DISPATCHED_PAGE_SIZE, now\)/);
+    // The count beside the title is every matching slab, not the page's rows.
+    expect(page).toMatch(/<span className="text-foreground font-semibold tabular-nums">\{total\}<\/span>/);
+    expect(page).toMatch(/Page <span className="text-foreground font-medium">\{page\}<\/span> of \{pages\}/);
+    // Full details only for the rows drawn.
+    const load = repo.slice(repo.indexOf('export async function loadDispatchedPage('));
+    expect(load).toMatch(/rowsFor\(keys\.slice\(\(page - 1\) \* pageSize, page \* pageSize\)\)/);
+    // A page past the last is the last; nothing below 1.
+    expect(load).toMatch(/const page = Math\.min\(Math\.max\(1, filters\.page\), pages\);/);
+  });
+
+  it('opens at once from the sidebar: a loading screen while the page is built (19 Nov 2026)', () => {
+    const loading = read('src/app/chromia/dispatch/loading.tsx');
+    expect(loading).toMatch(/export default function DispatchedLoading\(\)/);
+    expect(loading).toMatch(/<PageHeader title="Dispatched"/);
   });
 
   it('makes Dispatch Date and Dispatch Date Range the prominent filters', () => {

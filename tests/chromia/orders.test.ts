@@ -7,10 +7,15 @@ import { navigation } from '@/lib/chromia/config/navigation';
 import {
   descendingSerials,
   finishingChoiceOf,
+  ORDER_EXPORT_COLUMNS,
+  ORDER_INITIATED_BY_LABEL,
   ORDER_OTHERS,
+  orderExportMatrix,
   orderStatusOf,
   parseCustomerSearch,
   parseOrderForm,
+  parseOrderView,
+  quantityTotal,
   thicknessChoiceOf,
 } from '@/lib/chromia/orders';
 import { toPlantDateInput } from '@/lib/chromia/plant-time';
@@ -130,19 +135,23 @@ describe('Orders — the page', () => {
 
   it('is Dashboard, then Order Entry, then Recent Orders', () => {
     const titles = [...page.matchAll(/<SectionCard\s+title="([^"]+)"/g)].map((m) => m[1]);
-    expect(titles).toEqual(['Dashboard', 'Pending Orders', 'Order Entry', 'Recent Orders']);
+    expect(titles).toEqual(['Dashboard', 'Order Entry', 'Recent Orders']);
     expect(page).toMatch(/Search Customer Name/);
     expect(page).toMatch(/Total Completed Orders/);
     expect(page).toMatch(/Total Pending Orders/);
-    expect(page).toMatch(/Click to See Orders/);
+    // Both KPI cards open their orders (19 Nov 2026).
+    expect(page).toMatch(/\(\['completed', 'pending'\] as const\)\.map\(\(kpi\) => \{/);
+    expect(page).toMatch(/'Click to See Orders'/);
+    expect(page).toMatch(/title=\{ORDER_VIEW_LABELS\[view\]\}/);
   });
 
-  it('Recent Orders has exactly the fourteen columns asked for, in order', () => {
-    const heads = [...table.matchAll(/<th className=\{th\}>([^<]+)<\/th>/g)].map((m) => m[1]);
+  it('Recent Orders has the columns asked for, in order, then Action after Status (19 Nov 2026)', () => {
+    const head = table.slice(table.indexOf('<thead'), table.indexOf('</thead>'));
+    const heads = [...head.matchAll(/<th className=\{[^>]+\}>([^<]+)<\/th>/g)].map((m) => m[1]);
     expect(heads).toEqual([
       'S.No.',
       'Customer Name',
-      'Requested By',
+      '{ORDER_INITIATED_BY_LABEL}',
       'Design Name',
       'Base Material Name',
       'Printing File Name',
@@ -154,15 +163,16 @@ describe('Orders — the page', () => {
       'Person In-Charge Name',
       'Remarks',
       'Status',
+      'Action',
     ]);
     expect(table).toMatch(/row\.actualDeliveryDate \? dateFmt\.format\(row\.actualDeliveryDate\) : '--'/);
   });
 
   it('the form: nine Order Details, the DELIVERY STATUS heading, then its four', () => {
-    const labels = [...form.matchAll(/<Field\s+label="([^"]+)"/g)].map((m) => m[1]);
+    const labels = [...form.matchAll(/<Field\s+label=(?:"([^"]+)"|\{([A-Z_]+)\})/g)].map((m) => m[1] ?? m[2]);
     expect(labels).toEqual([
       'Customer Name *',
-      'Requested By',
+      'ORDER_INITIATED_BY_LABEL',
       'Design Name',
       'Base Material Name',
       'Printing File Name',
@@ -191,6 +201,8 @@ describe('Orders — kept apart from every slab workflow', () => {
     'src/lib/chromia/orders.ts',
     'src/lib/chromia/server/actions/orders.ts',
     'src/lib/chromia/server/repositories/order-repository.ts',
+    // The KPI lists' Excel (19 Nov 2026) reads orders and nothing else.
+    'src/app/api/chromia/orders-export/route.ts',
   ];
 
   it('the Orders code touches only chromia_order and its photos', () => {
@@ -206,5 +218,91 @@ describe('Orders — kept apart from every slab workflow', () => {
       (f) => !orderFiles.includes(f) && !f.includes('api/chromia/order-photo'),
     );
     for (const file of others) expect(read(file), file).not.toMatch(/chromiaOrder|order-repository|ORDER_PHOTO_MODEL/);
+  });
+});
+
+describe('Orders — who sees and does what (19 Nov 2026)', () => {
+  const page = read('src/app/chromia/orders/page.tsx');
+  const one = read('src/app/chromia/orders/[id]/page.tsx');
+  const table = read('src/app/chromia/orders/orders-table.tsx');
+  const form = read('src/app/chromia/orders/order-form.tsx');
+  const actions = read('src/lib/chromia/server/actions/orders.ts');
+  const route = read('src/app/api/chromia/orders-export/route.ts');
+
+  it('"Requested By" is "Order Initiated By" for every role', () => {
+    expect(ORDER_INITIATED_BY_LABEL).toBe('Order Initiated By');
+    expect([page, table, form].join('')).not.toMatch(/>Requested By</);
+  });
+
+  it('the operator\'s form saves without a customer name; every other role\'s still needs one', () => {
+    const blank = { customerName: '', designName: 'Tajvein', quantity: '4' };
+    expect(parseOrderForm(blank).ok).toBe(false);
+    const operator = parseOrderForm(blank, { withCustomer: false });
+    expect(operator.ok).toBe(true);
+    if (operator.ok) expect(operator.values.designName).toBe('Tajvein');
+  });
+
+  it('the server, not the form, keeps the operator off Customer Name and Order Initiated By', () => {
+    expect(actions).toMatch(/const full = chromiaHasFullOrderAccess\(await currentUser\(\)\);/);
+    expect(actions).toMatch(/if \(!full\) \{\n\s+\/\/[^\n]*\n\s+values\.customerName = before\?\.customerName \?\? '';\n\s+values\.requestedBy = before\?\.requestedBy \?\? null;/);
+  });
+
+  it('Delete and the Excel are refused to the operator on the server', () => {
+    const del = actions.slice(actions.indexOf('export async function deleteOrderAction'));
+    expect(del).toMatch(/const user = await requireActingUser\(\);\n\s+if \(!chromiaHasFullOrderAccess\(await currentUser\(\)\)\) \{\n\s+throw new AppError\(ErrorCode\.FORBIDDEN,/);
+    expect(del).toMatch(/tx\.entryPhoto\.deleteMany\(\{ where: \{ model: ORDER_PHOTO_MODEL, recordId: id \} \}\)/);
+    expect(del).toMatch(/action: AuditAction\.DELETE/);
+    expect(route).toMatch(/if \(!chromiaHasFullOrderAccess\(await currentUser\(\)\)\) return new Response\('Forbidden', \{ status: 403 \}\);/);
+  });
+
+  it('the operator gets no Dashboard, no customers and no Delete on the page', () => {
+    expect(page).toMatch(/const full = chromiaHasFullOrderAccess\(user\);/);
+    expect(page).toMatch(/const customer = full \? parseCustomerSearch\(params\.customer\) : '';/);
+    expect(page).toMatch(/const view = full \? parseOrderView\(params\.view\) : null;/);
+    expect(page).toMatch(/full \? loadCustomerNames\(\) : Promise\.resolve\(\[\]\)/);
+    expect(page).toMatch(/\{full \? \(\n\s+<div className="mb-6">\n\s+<SectionCard title="Dashboard"/);
+    expect(page).toMatch(/<OrderForm [^>]*limited=\{!full\} \/>/);
+    expect(page).toMatch(/<OrdersTable rows=\{recent\} [^>]*operator=\{!full\} canDelete=\{full\} \/>/);
+    expect(form).toMatch(/\{limited \? null : \(\n\s+<>\n\s+<Field label="Customer Name \*"/);
+    expect(one).toMatch(/full \? loadCustomerNames\(\) : Promise\.resolve\(\[\]\)/);
+    expect(one).toMatch(/limited=\{!full\}/);
+  });
+
+  it('the operator\'s table: S.No., then Design Name, highlighted, which opens the order; no customer columns', () => {
+    expect(table).toMatch(/\{operator \? null : <th className=\{th\}>Customer Name<\/th>\}/);
+    expect(table).toMatch(/\{operator \? null : <th className=\{th\}>\{ORDER_INITIATED_BY_LABEL\}<\/th>\}/);
+    expect(table).toMatch(/\{operator \? \(\n\s+<Link\n\s+href=\{open\(row\.id\)\}\n\s+data-design-link=""/);
+    expect(table).toMatch(/\{canDelete \? <DeleteOrderButton /);
+  });
+
+  it('a KPI list\'s Total is the Quantity of Slabs of exactly its rows, on screen and in the Excel', () => {
+    const rows = [
+      { quantity: 5 }, { quantity: 11 }, { quantity: null }, { quantity: 9 },
+    ];
+    expect(quantityTotal(rows)).toBe(25);
+    expect(quantityTotal([])).toBe(0);
+    const day = new Date('2026-11-19T00:00:00Z');
+    const order = (customerName: string, quantity: number | null) => ({
+      customerName, requestedBy: null, designName: 'Tajvein', baseMaterialName: null, printingFileName: null, quantity,
+      thicknessMm: 20, finishingType: null, requestedDeliveryDate: day, actualDeliveryDate: null, personInCharge: null, remarks: null,
+      status: 'PENDING' as const,
+    });
+    const { body, total } = orderExportMatrix([order('Customer 1', 5), order('Customer 2', 11), order('', 9)], { thickness: (mm) => `${mm} mm`, day: () => '19 Nov 2026' });
+    expect(body.map((r) => [r[0], r[1], r[6]])).toEqual([[3, 'Customer 1', 5], [2, 'Customer 2', 11], [1, 'Customer not entered', 9]]);
+    expect(total[0]).toBe('Total');
+    expect(total[ORDER_EXPORT_COLUMNS.indexOf('Quantity of Slabs')]).toBe(25);
+    expect(body[0]).toHaveLength(ORDER_EXPORT_COLUMNS.length);
+    expect(read('src/app/api/chromia/orders-export/route.ts')).toMatch(/const rows = await listOrdersInView\(view\);/);
+    expect(table).toMatch(/<td className=\{`\$\{tdNum\} font-semibold`\}>\{quantityTotal\(rows\)\}<\/td>/);
+  });
+
+  it('each KPI lists the very orders it counts', () => {
+    const repo = read('src/lib/chromia/server/repositories/order-repository.ts');
+    expect(repo).toMatch(/prisma\.chromiaOrder\.count\(\{ where: \{ actualDeliveryDate: \{ not: null \} \} \}\)/);
+    expect(repo).toMatch(/listCompletedOrders[\s\S]{0,200}where: \{ actualDeliveryDate: \{ not: null \} \}/);
+    expect(repo).toMatch(/prisma\.chromiaOrder\.count\(\{ where: \{ actualDeliveryDate: null \} \}\)/);
+    expect(repo).toMatch(/listPendingOrders[\s\S]{0,200}where: \{ actualDeliveryDate: null \}/);
+    expect(parseOrderView('completed')).toBe('completed');
+    expect(parseOrderView('everything')).toBeNull();
   });
 });

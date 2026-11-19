@@ -22,6 +22,7 @@ import { PLANT_TIME_ZONE } from '@/lib/chromia/plant-time';
 import { requirePageUser } from '@/lib/pageUser';
 
 import { FilterBar } from './filter-bar';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Recalibration Tracking' };
 export const dynamic = 'force-dynamic';
@@ -65,7 +66,10 @@ export default async function RecalibrationTrackingPage({
   // Signed in, or no further, on every visit: the module layout's gate is
   // not run again when the browser moves between this module's pages
   // (requirePageUser in lib/pageUser.ts says why).
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const params = await searchParams;
   const filters = parseTrackingFilters(params);
 
@@ -254,7 +258,7 @@ export default async function RecalibrationTrackingPage({
                         </td>
                         <td className={`${td} text-right`}>
                           {/* Edit opens the slab's Recalibration form (change 5). */}
-                          <SlabActions editHref={`${APP_ROUTES.recalibrations}/${record.id}`} slabId={record.id} slabNo={record.slabNo} />
+                          <SlabActions editHref={`${APP_ROUTES.recalibrations}/${record.id}`} slabId={record.id} slabNo={record.slabNo} canDelete={canDelete} />
                         </td>
                       </tr>
                     );

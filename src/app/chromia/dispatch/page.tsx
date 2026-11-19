@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { EmptyState, PageHeader, Stat } from '@/components/chromia/ui';
 import { dataTable, SectionCard } from '@/components/chromia/ui/form';
@@ -7,6 +8,8 @@ import { SlabActions } from '@/components/chromia/ui/delete-slab-button';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import {
   buildDispatchedQuery,
+  DISPATCHED_PAGE_SIZE,
+  dispatchedPageQuery,
   dispatchMonthOptions,
   hasDispatchedFilters,
   monthLabel,
@@ -15,15 +18,12 @@ import {
 import { PLANT_TIME_ZONE, toPlantDateInput } from '@/lib/chromia/plant-time';
 import type { RawSearchParams } from '@/lib/chromia/simple-filters';
 import { manualRemark } from '@/lib/chromia/slab-remarks';
-import {
-  dispatchedFilterOptions,
-  dispatchedKpis,
-  listDispatchedSlabs,
-} from '@/lib/chromia/server/repositories/dispatch-repository';
+import { loadDispatchedPage } from '@/lib/chromia/server/repositories/dispatch-repository';
 import { requirePageUser } from '@/lib/pageUser';
 
 import { AlterFromDispatchedForm } from './alter-from-dispatched-form';
 import { DispatchedFindASlab } from './find-a-slab';
+import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
 
 export const metadata: Metadata = { title: 'Dispatched' };
 export const dynamic = 'force-dynamic';
@@ -34,6 +34,10 @@ const dateFmt = new Intl.DateTimeFormat('en-GB', {
   year: 'numeric', timeZone: PLANT_TIME_ZONE, });
 
 const { th, td, tdMuted, tdNum } = dataTable;
+
+/** Previous / Next — the same buttons as Slab Records' pages. */
+const pageButton =
+  'border-line surface hover:border-line-strong inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-medium transition-colors hover:bg-[var(--surface-muted)]';
 
 /**
  * Dispatched (was Dispatch; renamed 27 Oct 2026).
@@ -67,16 +71,24 @@ export default async function DispatchedPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  await requirePageUser();
+  const user = await requirePageUser();
+  // Delete is every Chromia login's but the Chromia Operator's (the owner,
+  // 19 Nov 2026); the delete action asks the same rule (requireChromiaDeleter).
+  const canDelete = chromiaCanDeleteSlab(user);
   const filters = parseDispatchedFilters(await searchParams);
   const filtered = hasDispatchedFilters(filters);
   const now = new Date();
 
-  const [kpis, options, slabs] = await Promise.all([
-    dispatchedKpis(now),
-    dispatchedFilterOptions(),
-    listDispatchedSlabs(filters, now),
-  ]);
+  // ONE LOAD, ONE PAGE OF ROWS (19 Nov 2026, the navigation fix). The table
+  // drew every slab ever dispatched, each with its own form, so a click on
+  // Dispatched waited for megabytes that grew with every dispatch. It now draws
+  // 25 rows a page, as Slab Records does; the count beside the title, the KPIs
+  // and the filters are unchanged (dispatch-repository loadDispatchedPage).
+  const { kpis, options, slabs, total, page, pages, from } = await loadDispatchedPage(filters, DISPATCHED_PAGE_SIZE, now);
+  const pageHref = (n: number) => {
+    const query = dispatchedPageQuery(filters, n);
+    return query ? `${APP_ROUTES.dispatch}?${query}` : APP_ROUTES.dispatch;
+  };
 
   const thisMonth = toPlantDateInput(now).slice(0, 7);
   const months = dispatchMonthOptions(now);
@@ -136,20 +148,21 @@ export default async function DispatchedPage({
       <SectionCard
         title="Dispatched Slabs"
         accent="active"
-        padded={slabs.length === 0}
+        padded={total === 0}
         actions={
           <span className="border-line surface text-muted rounded-full border px-3 py-1 text-xs font-medium">
-            <span className="text-foreground font-semibold tabular-nums">{slabs.length}</span>{' '}
-            {slabs.length === 1 ? 'slab' : 'slabs'}
+            <span className="text-foreground font-semibold tabular-nums">{total}</span>{' '}
+            {total === 1 ? 'slab' : 'slabs'}
             {filtered ? ' · filtered' : ''}
           </span>
         }
       >
-        {slabs.length === 0 ? (
+        {total === 0 ? (
           <EmptyState>
             {filtered ? 'No dispatched slab matches these filters.' : 'No slab has been dispatched yet.'}
           </EmptyState>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className={dataTable.root}>
               <thead className={dataTable.head}>
@@ -197,6 +210,7 @@ export default async function DispatchedPage({
                         editHref={`${APP_ROUTES.dispatch}/${slab.slabId}/edit`}
                         slabId={slab.slabId}
                         slabNo={slab.slabNo}
+                        canDelete={canDelete}
                       />
                     </td>
                   </tr>
@@ -204,6 +218,31 @@ export default async function DispatchedPage({
               </tbody>
             </table>
           </div>
+
+          {pages > 1 ? (
+            <nav className="border-line surface-muted flex items-center justify-between border-t px-5 py-3.5 text-sm">
+              <span className="text-muted">
+                Page <span className="text-foreground font-medium">{page}</span> of {pages}
+                <span className="hidden sm:inline">
+                  {' '}
+                  · slabs {from}–{from + slabs.length - 1} of {total}
+                </span>
+              </span>
+              <span className="flex gap-2">
+                {page > 1 ? (
+                  <Link href={pageHref(page - 1)} className={pageButton}>
+                    Previous
+                  </Link>
+                ) : null}
+                {page < pages ? (
+                  <Link href={pageHref(page + 1)} className={pageButton}>
+                    Next
+                  </Link>
+                ) : null}
+              </span>
+            </nav>
+          ) : null}
+          </>
         )}
       </SectionCard>
     </>
