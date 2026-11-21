@@ -9,6 +9,8 @@ import { combineDateAndTime } from '@/lib/chromia/operator-register';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
 import { slabRecordDeleteSchema, slabRecordEditSchema } from '@/lib/chromia/validation/slab-record';
 import { isSlabNoTaken } from '@/lib/chromia/server/repositories/slab-record-repository';
+import { findSlabSection, isUngradedTrimmingNo } from '@/lib/chromia/server/repositories/slab-section-repository';
+import type { SlabSection } from '@/lib/chromia/slab-section';
 import { deleteSlabRecord, updateSlabRecord } from '@/lib/chromia/server/services/slab-record-service';
 
 export interface SlabRecordFormState {
@@ -145,9 +147,18 @@ export async function deleteSlabRecordAction(
 export async function checkSlabNoAction(
   slabNo: string,
   exceptId?: string,
-): Promise<{ taken: boolean }> {
+): Promise<{ taken: boolean; section: SlabSection | null }> {
   const trimmed = slabNo.trim();
-  if (trimmed === '') return { taken: false };
+  if (trimmed === '') return { taken: false, section: null };
 
-  return { taken: await isSlabNoTaken(trimmed, exceptId) };
+  // Duplicate Slab Detection (21 Nov 2026): which section the slab — this
+  // number or the same physical slab (14567 / 14567-A) — is already in.
+  // An ungraded Trimming Without Design Printing number is taken as well:
+  // the save refuses it (recordOperatorEntry).
+  const [taken, trimmingNo, section] = await Promise.all([
+    isSlabNoTaken(trimmed, exceptId),
+    isUngradedTrimmingNo(trimmed),
+    findSlabSection(trimmed, exceptId),
+  ]);
+  return { taken: taken || trimmingNo, section };
 }

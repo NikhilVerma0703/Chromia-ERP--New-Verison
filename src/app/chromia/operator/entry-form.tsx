@@ -10,6 +10,7 @@ import { DispositionBadge, GradeBadge } from '@/components/chromia/ui/status';
 import { TimeInput } from '@/components/chromia/ui/time-input';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
+import { SLAB_SECTION_MESSAGES, type SlabSection } from '@/lib/chromia/slab-section';
 import { saveSlabEntryAction, type OperatorFormState } from '@/lib/chromia/server/actions/operator';
 import { checkSlabNoAction } from '@/lib/chromia/server/actions/slab-record';
 
@@ -131,25 +132,48 @@ export function EntryForm({
   const slabInput = useRef<HTMLInputElement>(null);
 
   /**
-   * Caught as the operator leaves the field, not after the whole row is filled
-   * in. The save is refused by the service and by the database's unique index
-   * as well — this is the courtesy, not the guard.
+   * Caught while the operator types (a moment after the last key) and as they
+   * leave the field, not after the whole row is filled in. The save is refused
+   * by the service and by the database's unique index as well — this is the
+   * courtesy, not the guard.
+   *
+   * DUPLICATE SLAB DETECTION (21 Nov 2026): the check also says which section
+   * the slab is already in — Recalibration, or Trimming (Without Design
+   * Printing included) — for this number or the same physical slab
+   * (14567 / 14567-A), from the database, whoever entered it.
    */
   const [duplicate, setDuplicate] = useState(false);
+  const [section, setSection] = useState<SlabSection | null>(null);
   const [, startCheck] = useTransition();
+  const checked = useRef('');
 
-  const checkSlabNo = () => {
-    const value = slabNo.trim();
+  const checkSlabNo = (raw: string = slabNo) => {
+    const value = raw.trim();
     // The slab keeps its own number when its own entry is being corrected.
     if (value === '' || value === editing?.slabNo) {
+      checked.current = value;
       setDuplicate(false);
+      setSection(null);
       return;
     }
+    checked.current = value;
     startCheck(async () => {
-      const { taken } = await checkSlabNoAction(value);
-      setDuplicate(taken);
+      const result = await checkSlabNoAction(value, editing?.id);
+      // A later keystroke has asked again: this answer is for an old number.
+      if (checked.current !== value) return;
+      setDuplicate(result.taken);
+      setSection(result.section);
     });
   };
+
+  useEffect(() => {
+    const value = slabNo.trim();
+    if (value === checked.current) return;
+    const timer = setTimeout(() => checkSlabNo(slabNo), 400);
+    return () => clearTimeout(timer);
+    // checkSlabNo reads only slabNo and the slab being edited.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slabNo]);
 
   /* The QC Report starts blank for every new row: remounted on each save. */
   const [qcKey, setQcKey] = useState(0);
@@ -177,12 +201,16 @@ export function EntryForm({
     setSlabNo('');
     setInTime('');
     setDuplicate(false);
+    setSection(null);
+    checked.current = '';
     setQcKey((key) => key + 1);
     slabInput.current?.focus();
   }, [state.savedAt, state.qcFailed, state.savedSlabId, isEditing, back, router]);
 
   const errors = state.fieldErrors;
-  const slabNoError = errors?.slabNo?.[0] ?? (duplicate ? DUPLICATE_SLAB_NO_MESSAGE : undefined);
+  // The section, when the slab is in one, says more than "duplicate" does.
+  const slabNoError =
+    errors?.slabNo?.[0] ?? (section ? SLAB_SECTION_MESSAGES[section] : duplicate ? DUPLICATE_SLAB_NO_MESSAGE : undefined);
   const dateFieldName = isEditing ? 'receivedDate' : 'entryDate';
   const dateError = (isEditing ? errors?.receivedDate?.[0] : errors?.entryDate?.[0]) ?? undefined;
 
@@ -257,8 +285,10 @@ export function EntryForm({
                 onChange={(event) => {
                   setSlabNo(event.target.value);
                   setDuplicate(false);
+                  setSection(null);
                 }}
-                onBlur={checkSlabNo}
+                onBlur={() => checkSlabNo()}
+                data-slab-section={section ?? undefined}
                 placeholder="130520"
                 aria-invalid={slabNoError ? true : undefined}
                 className={`${field} font-mono ${slabNoError ? 'border-status-waste' : ''}`}

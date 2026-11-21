@@ -23,6 +23,7 @@ import { sendFromStockAction } from '@/lib/chromia/server/actions/stockyard';
 import { alterFromDispatchedAction } from '@/lib/chromia/server/actions/dispatched-alter';
 import { addTrimmingWithoutPrintingAction, deleteTrimmingAction, updateTrimmingSlabAction } from '@/lib/chromia/server/actions/trimming';
 import { listRecentOrders } from '@/lib/chromia/server/repositories/order-repository';
+import { checkSlabNoAction } from '@/lib/chromia/server/actions/slab-record';
 import { loadTrimmingBoard, loadTrimmingRecord } from '@/lib/chromia/server/repositories/trimming-repository';
 import { parseTrimFilters, type TrimBoardKpis } from '@/lib/chromia/trimming-board';
 import { listSentFromStock } from '@/lib/chromia/server/repositories/stockyard-repository';
@@ -533,6 +534,25 @@ async function main() {
     (await loadTrimmingBoard(parseTrimFilters({ slabNo: tw, view: 'trimmed' }))).rows.map((r) => [r.attemptNumber, r.status]),
   ], [[tw], [[2, 'Sent for Trimming (2 cm → 1.2 cm)'], [1, 'Trimmed — Grade A: Stock']]]);
   expect('Find a Slab: a slab number that is not there finds nothing', (await loadTrimmingBoard(parseTrimFilters({ slabNo: `${tw}-none` }))).rows.length, 0);
+
+  // ── Duplicate Slab Detection on Slab Entry (21 Nov 2026) ──────────────
+  await step('Slab Entry: a slab number already in a section is named, from the database', async () => {
+    const section = async (slabNo: string) => (await checkSlabNoAction(slabNo)).section;
+    expect('waiting for its 2nd recalibration → RECALIBRATION', await section(e), 'RECALIBRATION');
+    expect('the same physical slab (…-A) → RECALIBRATION', await section(`${e}-A`), 'RECALIBRATION');
+    expect('out on its 2nd trimming → TRIMMING', await section(tw), 'TRIMMING');
+    expect('in stock → no section, but taken', [await section(n('8')), (await checkSlabNoAction(n('8'))).taken], [null, true]);
+    expect('a new number → nothing', await checkSlabNoAction(`${n('8')}0`), { taken: false, section: null });
+  });
+  await step('Slab Entry: a Trimming Without Design Printing number is named, and refused', async () => {
+    await addTrimmingWithoutPrintingAction({}, form({ batchNo: BATCH, slabNo: n('22'), baseMaterial: MATERIAL, thicknessCm: '3' }));
+    expect('TRIMMING, taken', await checkSlabNoAction(n('22')), { taken: true, section: 'TRIMMING' });
+    const refused = await saveSlabEntryAction({}, form({ entryDate: TODAY, batchNo: BATCH, slabNo: n('22'), baseMaterial: MATERIAL, fileName: DESIGN, thicknessCm: '2', inTime: '09:30' }));
+    expect('the save is refused under Slab No.', refused.fieldErrors?.slabNo, ['This slab is already present in the TRIMMING SECTION.']);
+    expect('no slab was made', await prisma.chromiaSlab.count({ where: { slabNo: n('22') } }), 0);
+    const record = await prisma.chromiaTrimming.findUniqueOrThrow({ where: { slabNo: n('22') } });
+    return deleteTrimmingAction({}, form({ id: record.id }));
+  });
 
   // ── Edits never duplicate ─────────────────────────────────────────────
   await step('Slab Records Edit: thickness corrected — the same record', async () =>

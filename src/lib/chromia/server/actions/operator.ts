@@ -7,6 +7,7 @@ import { DISPOSITION_LABELS, GRADE_ALLOWED_DISPOSITIONS } from '@/lib/chromia/co
 import { requireActingUser } from '@/lib/chromia/current-user';
 import { isAppError } from '@/lib/chromia/errors';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
+import { SLAB_SECTION_MESSAGES } from '@/lib/chromia/slab-section';
 import { operatorEntrySchema } from '@/lib/chromia/validation/operator';
 import { intakeQcSchema } from '@/lib/chromia/validation/slab';
 import { recordOperatorEntry } from '@/lib/chromia/server/services/operator-service';
@@ -53,7 +54,7 @@ export async function recordOperatorEntryAction(
   } catch (error) {
     if (isAppError(error)) {
       // A duplicate belongs under the field that caused it.
-      if (error.message === DUPLICATE_SLAB_NO_MESSAGE) {
+      if (error.message === DUPLICATE_SLAB_NO_MESSAGE || error.message === SLAB_SECTION_MESSAGES.TRIMMING) {
         return { fieldErrors: { slabNo: [error.message] } };
       }
       return { error: error.message };

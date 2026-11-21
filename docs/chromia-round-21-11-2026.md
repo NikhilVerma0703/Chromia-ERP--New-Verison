@@ -13,6 +13,7 @@ one commit per change.
 | 3 | Orders: Printing Completed? (Yes / No) and the Printing Status column, for every role | Done |
 | 4 | Available Slabs after Recalibration / after Trimming: every receipt, of any attempt, not yet reprinted | Done |
 | 5 | QC Report: Grade C offers Recalibration and Trimming after every recalibration cycle and in Slab Records Edit | Done |
+| 6 | Slab Entry: names the section (Recalibration / Trimming) a typed slab number is already in | Done |
 
 Each change has the same headings as the earlier rounds' notes.
 
@@ -195,3 +196,44 @@ None.
 - **In the browser (test database):** Slab Records Edit of slab 900501 — Grade B → Stock, two recalibration trips — switched to Grade C offers Recalibration and Trimming (not saved). No console errors.
 - **Workflow (test database):** after the 1st recalibration and reprint, the Recalibration page's QC grades C → Trimming: the slab leaves Recalibration for Trimming, gets its Trimming record, keeps its trip, and reads "Moved to Trimming — Grade C"; a slab back from recalibration and in Stock is edited to C → Trimming and then to C → Recalibration (its 2nd attempt waits). The counts move exactly as expected, with the full audit after every step.
 - **Tests:** typecheck clean; Vitest 624; node tests 81; workflows 96 steps; attendance 40; audit 84 checks; production build.
+
+---
+
+### Change #6: Duplicate Slab Detection in Slab Entry
+
+#### Requirement (as given)
+
+> When an operator enters a Slab Number on the main Slab Entry page, check whether that slab already exists in the Recalibration or Trimming sections (Trimming Without Design Printing included). Found in Recalibration: show under Slab Number "This slab is already present in the RECALIBRATION SECTION." Found in Trimming: "This slab is already present in the TRIMMING SECTION." Check automatically as the number is entered, against the database, across all operators; no unnoticed duplicate entries; keep Slab Entry as it is.
+
+#### What was there
+
+Slab Entry already refused a slab number that exists (unique in the database), with "Duplicate Slab No. — this slab number already exists." under the field, checked when the operator left the field. It did not say where the slab is, did not see a Trimming Without Design Printing number (not a Chromia slab until its QC), and did not look at the same physical slab entered again (14567 / 14567-A).
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Checked as the number is typed** (a moment after the last key), and again when leaving the field — from the database, so every operator's slabs count.
+- **The section, when there is one, replaces the generic duplicate message** under Slab No.:
+  - **RECALIBRATION SECTION** — a slab on its recalibration journey: waiting to be sent, out, back, or back on the line awaiting its QC after a trip;
+  - **TRIMMING SECTION** — a slab graded C → Trimming and still there, or a Trimming Without Design Printing number not yet graded.
+  A slab that has left both (in stock, dispatched, cleared …) still gets "Duplicate Slab No." as before; a new number gets nothing.
+- **Same physical slab:** typing 14567-A while 14567 is in a section shows that section too. Re-entering a slab with a letter is still allowed (as since 28 Oct) — the warning makes sure it is not unnoticed. The exact number stays refused.
+- **A Trimming Without Design Printing number is now refused on Slab Entry's save**, with the TRIMMING message (it used to be accepted, and the slab then could not be made Chromia at its Trimming QC).
+- On Slab Records Edit the slab's own number is never flagged.
+
+#### Implemented
+
+- `src/lib/chromia/slab-section.ts` (new, pure) — the two sentences and which section a slab is in.
+- `src/lib/chromia/server/repositories/slab-section-repository.ts` (new) — the database lookup, by physical slab.
+- `src/lib/chromia/server/actions/slab-record.ts` — `checkSlabNoAction` also returns the section.
+- `src/lib/chromia/server/services/operator-service.ts`, `src/lib/chromia/server/actions/operator.ts` — the save refuses a Without Design Printing number, under Slab No.
+- `src/app/chromia/operator/entry-form.tsx` — the check while typing, and the message under Slab No.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **In the browser (test database):** typing "demo-777" (a Without Design Printing record, entered as DEMO-777) showed "This slab is already present in the TRIMMING SECTION." under Slab No. while still typing; 900501 (in Stock) showed "Duplicate Slab No."; a new number showed nothing. No console errors.
+- **Workflow (test database):** a slab waiting for its 2nd recalibration → RECALIBRATION, and its …-A too; a slab out on its 2nd trimming → TRIMMING; a slab in Stock → taken, no section; a new number → nothing; a Without Design Printing number → TRIMMING, and Slab Entry's save refused under Slab No. with no slab made.
+- **Tests:** typecheck clean; Vitest 630; node tests 81; workflows 98 steps; audit 84 checks; production build.

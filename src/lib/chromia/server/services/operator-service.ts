@@ -5,6 +5,8 @@ import { ConflictError, ValidationError } from '@/lib/chromia/errors';
 import { createLogger } from '@/lib/chromia/logger';
 import { combineDateAndTime, registerDay } from '@/lib/chromia/operator-register';
 import { DUPLICATE_SLAB_NO_MESSAGE } from '@/lib/chromia/slab-record';
+import { SLAB_SECTION_MESSAGES } from '@/lib/chromia/slab-section';
+import { isUngradedTrimmingNo } from '@/lib/chromia/server/repositories/slab-section-repository';
 import type { OperatorEntryInput } from '@/lib/chromia/validation/operator';
 import { resolveBaseMaterialId, resolveDesignId } from '@/lib/chromia/server/services/reference-service';
 import { markSlabsChromia } from '@/lib/chromia/inventory-bridge';
@@ -64,6 +66,13 @@ export async function recordOperatorEntry(input: OperatorEntryInput, userId: str
   const inTime = input.inTime ? combineDateAndTime(input.entryDate, input.inTime) : null;
   if (input.inTime && !inTime) {
     throw new ValidationError('Enter a valid in-time');
+  }
+
+  // A number already entered under Trimming Without Design Printing, not yet
+  // graded, is that slab (21 Nov 2026): refused here, as the Trimming page
+  // refuses a Chromia slab's number — the slab becomes Chromia at its QC.
+  if (await isUngradedTrimmingNo(input.slabNo)) {
+    throw new ConflictError(SLAB_SECTION_MESSAGES.TRIMMING);
   }
 
   const existing = await prisma.chromiaSlab.findUnique({
