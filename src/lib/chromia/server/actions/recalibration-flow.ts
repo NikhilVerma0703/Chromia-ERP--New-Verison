@@ -291,9 +291,9 @@ export async function updateRecalibrationSlabAction(
     fail('grade', 'The QC Report is graded on the slab’s new pass — save its Received Date and its details first.');
   }
   if (regrade) {
-    // The re-grade after recalibration: Grade C goes to Recalibration only
-    // (Trimming is Slab Entry's, 7 Nov 2026).
-    const allowed = allowedDispositions(grade, { trimming: false });
+    // The re-grade after recalibration: the complete QC options, as at Slab
+    // Entry — Grade C to Recalibration or Trimming (21 Nov 2026).
+    const allowed = allowedDispositions(grade, { trimming: true });
     const disposition = allowed.length === 1 ? allowed[0] : get('disposition');
     const parsed = intakeQcSchema.safeParse({
       grade,

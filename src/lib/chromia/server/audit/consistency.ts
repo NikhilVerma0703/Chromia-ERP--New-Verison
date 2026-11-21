@@ -182,7 +182,12 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   const trimmingRows = await listTrimmingRecords();
   same('Trimming table rows are unique records', trimmingRows.length, unique(trimmingRows.map((r) => r.id)));
   const trimmingIds = new Set(inTrimming);
-  none('No Trimming slab is on the Recalibration page', board.states.filter((s) => trimmingIds.has(s.id)).map((s) => s.id));
+  // A slab moved to Trimming after recalibration keeps its trips in the
+  // Recalibration history (21 Nov 2026), but is in none of its Current cards.
+  none(
+    'No Trimming slab is in a Recalibration Current Status card',
+    CURRENT_VIEWS.flatMap((view) => boardRows(board.states, view).map((r) => r.slabId)).filter((id) => trimmingIds.has(id)),
+  );
   none('No Trimming slab is in the Stockyard', inStock.filter((s) => trimmingIds.has(s.id)).map((s) => s.id));
 
   // ── Every slab's status agrees with its records ───────────────────────
@@ -225,9 +230,14 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   );
   none('A graded slab has a grade', slabs.filter((s) => s.currentDisposition !== null && s.currentGrade === null).map((s) => s.slabNo));
   none(
-    'A Trimming slab is Grade C, with no recalibration record and no stock entry',
+    // A slab may go to Trimming after recalibration (21 Nov 2026): no trip of it is still open.
+    'A Trimming slab is Grade C, with no recalibration trip open and no stock entry',
     slabs
-      .filter((s) => s.currentDisposition === 'TRIMMING' && (s.currentGrade !== 'C' || s.recalibrations.length > 0 || open(s) > 0))
+      .filter(
+        (s) =>
+          s.currentDisposition === 'TRIMMING' &&
+          (s.currentGrade !== 'C' || s.recalibrations.some((t) => t.sentDate && !t.receivedDate) || open(s) > 0),
+      )
       .map((s) => s.slabNo),
   );
 

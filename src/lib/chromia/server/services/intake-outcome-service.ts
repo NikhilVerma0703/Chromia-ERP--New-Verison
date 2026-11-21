@@ -51,20 +51,14 @@ export async function applyIntakeGrade(
       slabNo: true,
       recalibrationCount: true,
       cycles: { orderBy: { cycleNumber: 'desc' }, take: 1, select: { id: true } },
-      recalibrations: { select: { id: true }, take: 1 },
     },
   });
 
   if (!slab) throw new NotFoundError('Slab');
 
-  // TRIMMING IS SLAB ENTRY'S (7 Nov 2026): a slab that has been on a
-  // recalibration journey is re-graded on the Recalibration page, where
-  // Grade C goes to Recalibration only.
-  if (disposition === Disposition.TRIMMING && slab.recalibrations.length > 0) {
-    throw new BusinessRuleViolationError(
-      `Slab ${slab.slabNo} has a recalibration record, so Grade C goes to Recalibration only — Trimming is for a slab that has not been to recalibration`,
-    );
-  }
+  // Grade C may go to Trimming whatever the slab's recalibration history
+  // (21 Nov 2026; until then a slab with a recalibration record was refused).
+  // Its trips stay as they are, every one of them in the Recalibration history.
 
   const cycleId = slab.cycles[0]?.id;
   if (!cycleId) throw new NotFoundError('Process cycle');

@@ -357,17 +357,22 @@ async function main() {
   await step('Slab Entry Edit: Trimming corrected to Recalibration — leaves Trimming, Ready', async () =>
     saveSlabEntryAction({}, form({ qcMode: 'correct', slabId: await slabId(n('7')), entryDate: TODAY, receivedDate: TODAY, inTime: '09:30', batchNo: BATCH, slabNo: n('7'), baseMaterial: MATERIAL, fileName: DESIGN, thicknessCm: '2', slabRemarks: '', grade: 'C', disposition: 'RECALIBRATION', initialGrade: 'C', initialDisposition: 'TRIMMING', initialReason: '' })),
     { trimming: -1, recalibration: 1, recalibrated: 1, ready: 1 });
-  // Sent and received, back on the line, then re-graded C with a forged
-  // Trimming: the Recalibration page's Grade C is Recalibration only, so the
-  // server sets it — the slab never reaches Trimming.
-  await step('Recalibration re-grade: Grade C stays Recalibration, even when Trimming is sent', async () => {
+  // The QC after recalibration has the complete options (21 Nov 2026): Grade
+  // C may go to Trimming, and the slab leaves the recalibration journey for it.
+  await step('Recalibration re-grade after the 1st attempt: Grade C → Trimming', async () => {
     await recalibrationForm(n('7'), { sentDate: TODAY, receivedDate: TODAY });
     await recalibrationForm(n('7'), { inTime: '12:00' });
     return recalibrationForm(n('7'), { grade: 'C', disposition: 'TRIMMING' });
-    // Its 2nd attempt waits: a new record; and it has left "Ready" (first send only).
-  }, { sent: 1, received: 1, recalibrated: 1, ready: -1 });
-  expect('the re-grade sent it to Recalibration, not Trimming', (await statusOf(n('7'))).label, 'Need 2nd Time Recalibration');
-  expect('its outcome', (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: n('7') }, select: { currentDisposition: true } })).currentDisposition, 'RECALIBRATION');
+  }, { sent: 1, received: 1, ready: -1, recalibration: -1, trimming: 1 });
+  expect('its outcome is Trimming, with a Trimming record; its trip stays in the history', [
+    (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: n('7') }, select: { currentDisposition: true } })).currentDisposition,
+    await prisma.chromiaTrimming.count({ where: { slab: { slabNo: n('7') } } }),
+    (await prisma.chromiaRecalibrationCycle.findMany({ where: { slab: { slabNo: n('7') } }, select: { attemptNumber: true } })).length,
+  ], ['TRIMMING', 1, 1]);
+  expect('the Recalibration page says where it went', await (async () => {
+    const board = await loadRecalibrationBoard(parseBoardFilters({ slabNo: n('7') }), { page: 1, pageSize: 10 });
+    return board.rows.map((r) => statusLabel(r.state, r.grade));
+  })(), ['Moved to Trimming — Grade C']);
 
   // ── The Trimming section (7 Nov 2026, change 4) ───────────────────────
   const trimForm = async (slabNo: string, patch: Record<string, string>) => {
@@ -480,13 +485,11 @@ async function main() {
     (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate), Boolean(t.receivedDate), Boolean(t.restartedAt)]),
     (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: e }, select: { currentCycleNumber: true, status: true } })),
   ], [[[1, true, true, true]], { currentCycleNumber: 2, status: 'IN_STOCK' }]);
-  await step('Edit: Trimming is refused for a slab that has been to recalibration', async () => {
-    const refused = await correct(e, 'C', 'TRIMMING');
-    expect('refused', Boolean(refused.error || refused.fieldErrors), true);
-  });
-  expect('still in stock', (await statusOf(e)).status, 'IN_STOCK');
+  // Slab Records Edit: the complete QC options whatever the slab's history (21 Nov 2026).
+  await step('Edit: Stock → Trimming (Grade C) for a slab that has been to recalibration', () => correct(e, 'C', 'TRIMMING'), { stock: -1, trimming: 1 });
+  expect('in Trimming', [(await statusOf(e)).label, await prisma.chromiaTrimming.count({ where: { slab: { slabNo: e } } })], ['Moved to Trimming — Grade C', 1]);
   // Waiting for its 2nd send: a new record, but not "Ready" (first send only).
-  await step('Edit: Stock → Recalibration on its 2nd pass — the 2nd attempt waits', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, recalibrated: 1 });
+  await step('Edit: Trimming → Recalibration on its 2nd pass — the 2nd attempt waits', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { trimming: -1, recalibration: 1, recalibrated: 1 });
   expect('2nd attempt waiting', (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate)]), [[1, true], [2, false]]);
   await step('Edit: a dispatched slab keeps its QC — refused, nothing changed', async () => {
     const refused = await correct(n('6'), 'B', 'STOCK');

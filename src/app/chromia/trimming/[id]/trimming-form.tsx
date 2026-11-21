@@ -200,6 +200,8 @@ export function TrimmingSlabForm(props: Props) {
           <QcSection
             optional
             remarksField
+            // After trimming, Grade C goes to Recalibration (gradeTrimming).
+            allowTrimming={false}
             recalibrationReasons={props.recalibrationReasons}
             errors={errors}
             initial={{ slabRemarks: props.qc.remarks, reasonName: '' }}

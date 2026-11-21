@@ -210,9 +210,9 @@ export default async function OperatorPage({
         nowTime={toTimeInput(new Date())}
         fileNames={fileNames}
         batchNos={batchNos}
-        // Trimming is for a slab that has never come back from recalibration;
-        // a trip not yet back is undone by an Edit correction (17 Nov 2026).
-        qc={{ ...qc, allowTrimming: trips.every((t) => t.receivedDate === null) }}
+        // Grade C offers Recalibration and Trimming for every slab, whatever
+        // its recalibration history or earlier outcome (21 Nov 2026).
+        qc={{ ...qc, allowTrimming: true }}
         back={back}
         editing={
           selected

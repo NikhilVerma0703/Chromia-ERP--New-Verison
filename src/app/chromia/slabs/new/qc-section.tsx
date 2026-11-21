@@ -40,9 +40,11 @@ interface Props {
    */
   optional?: boolean;
   /**
-   * Grade C may go to Trimming as well as Recalibration (7 Nov 2026) — Slab
-   * Entry, for a slab with no recalibration record. Off (the default), Grade C
-   * goes to Recalibration only, as on the Recalibration page's re-grade.
+   * Grade C may go to Trimming as well as Recalibration. On (the default,
+   * 21 Nov 2026): the complete QC options everywhere — Slab Entry, Slab
+   * Records Edit and the QC after every recalibration cycle, whatever the
+   * slab's earlier grade or outcome. Off only for the QC Report after
+   * trimming (Trimming page), where Grade C goes to Recalibration.
    */
   allowTrimming?: boolean;
 }
@@ -64,8 +66,8 @@ function onlyOutcome(grade: string, trimming: boolean): string {
  *
  *   Grade A → Stock                       (set by the grade)
  *   Grade B → Stock · Sample Cutting      (chosen)
- *   Grade C → Recalibration · Trimming    (chosen; Recalibration only where
- *                                          allowTrimming is off)
+ *   Grade C → Recalibration · Trimming    (chosen; Recalibration only after
+ *                                          trimming, where allowTrimming is off)
  *
  * QC decides the grade and the outcome that grade allows, and nothing else at
  * the bench: the dates a slab is stocked or cut are captured on those sections'
@@ -84,7 +86,7 @@ export function QcSection({
   initial,
   remarksField = false,
   optional = false,
-  allowTrimming = false,
+  allowTrimming = true,
 }: Props) {
   const [grade, setGrade] = useState<string>(initial?.grade ?? '');
   const [disposition, setDisposition] = useState<string>(

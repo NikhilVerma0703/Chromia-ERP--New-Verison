@@ -78,6 +78,9 @@ export function stageOf({ disposition, writtenOff, trips }: SlabRecalState): Rec
 
   if (disposition === 'RECALIBRATION') return 'AWAITING_SEND';
   if (disposition && PASSED_OUTCOMES.includes(disposition)) return 'CLEARED';
+  // Graded C → Trimming after recalibration (21 Nov 2026): it has left the
+  // recalibration journey for the Trimming page.
+  if (disposition === 'TRIMMING') return 'CLEARED';
 
   return 'IN_PRODUCTION';
 }
@@ -125,6 +128,7 @@ export function statusLabel(state: SlabRecalState, grade?: string | null): strin
     case 'IN_PRODUCTION':
       return `In Processing — After Attempt ${used}`;
     case 'CLEARED': {
+      if (state.disposition === 'TRIMMING') return `Moved to Trimming${grade ? ` — Grade ${grade}` : ''}`;
       const outcome = state.disposition ? CLEARED_OUTCOME[state.disposition] : undefined;
       if (grade && outcome) return `Cleared — Grade ${grade}: ${outcome}`;
       return `Cleared${grade ? ` — Grade ${grade}` : ''}`;

@@ -12,6 +12,7 @@ one commit per change.
 | 2 | Trimming → Find a Slab: five filters over Trimming Records | Done |
 | 3 | Orders: Printing Completed? (Yes / No) and the Printing Status column, for every role | Done |
 | 4 | Available Slabs after Recalibration / after Trimming: every receipt, of any attempt, not yet reprinted | Done |
+| 5 | QC Report: Grade C offers Recalibration and Trimming after every recalibration cycle and in Slab Records Edit | Done |
 
 Each change has the same headings as the earlier rounds' notes.
 
@@ -156,3 +157,41 @@ None.
 - **Workflow (test database):** each recalibration receipt (attempts 1–5) adds 1 to Available and going back on the line takes it off; a slab cleared to Stock leaves Available; the trimming steps are unchanged.
 - **In the browser** (demo records on the test database, removed afterwards): Trimming Available 2 — the 2nd slab's receipt and an earlier, never-processed receipt of a slab now out again — and its rows; Recalibration's cards with the new hint.
 - **Tests:** typecheck clean; Vitest 617; node tests 81; workflows 96 steps; audit 84 checks (test and local databases); production build.
+
+---
+
+### Change #5: Fix QC Report Options After Recalibration & During Editing
+
+#### Requirement (as given)
+
+> Every time a slab is recalibrated, reprinted and returns for QC (after the 1st to 5th recalibration), the QC Report must show the complete original options: Grade A: Stock; Grade B: Stock and Sample Cutting; Grade C: Recalibration and Trimming — today only Recalibration appears under Grade C. Apply the same in Slab Records Edit (e.g. a slab that was Grade B → Stock, edited to Grade C, must offer both Recalibration and Trimming). Reuse the Slab Entry QC Report; do not restrict the options by the earlier grade or outcome; save correctly and reflect everywhere; keep QC history and the recalibration / trimming workflows.
+
+#### Cause
+
+Since 7 Nov 2026, Trimming was meant only for a slab that had never been to recalibration, enforced in four places: the QC Report component (Trimming off by default), Slab Entry / Slab Records Edit (Trimming off once a trip had come back), the Recalibration page's QC action (Grade C forced to Recalibration), and the QC save on the server (refused Trimming for any slab with a recalibration record).
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Removed all four restrictions.** The one QC Report component now offers the complete options by default, and Slab Entry, Slab Records Edit and the Recalibration page's QC after every cycle use it as it is.
+- **The QC Report after trimming (Trimming page) is unchanged:** there Grade C still goes to Recalibration. It was not part of this request, and sending a slab straight back to Trimming from its own Trimming QC would need a rule for the attempt being graded.
+- **A recalibrated slab sent to Trimming** keeps every trip in the Recalibration history (Overall Status counts are unchanged), is in none of the Recalibration Current Status cards, and reads **"Moved to Trimming — Grade C"** on the Recalibration page. It opens its Trimming record like any slab graded C → Trimming, and from there follows the Trimming workflow; a later Grade C → Recalibration continues its attempt count (the 5-attempt write-off still applies).
+
+#### Implemented
+
+- `src/app/chromia/slabs/new/qc-section.tsx` — `allowTrimming` defaults to on.
+- `src/app/chromia/operator/page.tsx` — Slab Entry / Slab Records Edit always offer Trimming.
+- `src/lib/chromia/server/actions/recalibration-flow.ts` — the QC after recalibration allows Trimming.
+- `src/lib/chromia/server/services/intake-outcome-service.ts` — the refusal removed.
+- `src/app/chromia/trimming/[id]/trimming-form.tsx` — keeps Grade C → Recalibration, now said explicitly.
+- `src/lib/chromia/recalibration-flow.ts` — the "Moved to Trimming" stage label.
+- `src/lib/chromia/server/audit/consistency.ts` — a Trimming slab may have recalibration history (but no trip out), and is in no Recalibration Current card.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **In the browser (test database):** Slab Records Edit of slab 900501 — Grade B → Stock, two recalibration trips — switched to Grade C offers Recalibration and Trimming (not saved). No console errors.
+- **Workflow (test database):** after the 1st recalibration and reprint, the Recalibration page's QC grades C → Trimming: the slab leaves Recalibration for Trimming, gets its Trimming record, keeps its trip, and reads "Moved to Trimming — Grade C"; a slab back from recalibration and in Stock is edited to C → Trimming and then to C → Recalibration (its 2nd attempt waits). The counts move exactly as expected, with the full audit after every step.
+- **Tests:** typecheck clean; Vitest 624; node tests 81; workflows 96 steps; attendance 40; audit 84 checks; production build.

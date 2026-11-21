@@ -165,9 +165,10 @@ export const GRADE_ALLOWED_DISPOSITIONS: Record<SlabGradeType, readonly Disposit
 };
 
 /**
- * The QC Outcomes a grade may go to on one screen. `trimming: false` is the
- * Recalibration page's re-grade, and any slab that has already made a
- * recalibration trip: there Grade C goes to Recalibration only.
+ * The QC Outcomes a grade may go to on one screen. `trimming: false` is only
+ * the QC Report after trimming, where Grade C goes to Recalibration; every
+ * other QC (Slab Entry, Slab Records Edit, after each recalibration cycle)
+ * offers Trimming too (21 Nov 2026).
  */
 export function allowedDispositions(
   grade: string,
