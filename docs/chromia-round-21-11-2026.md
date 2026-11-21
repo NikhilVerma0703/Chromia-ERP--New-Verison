@@ -9,6 +9,7 @@ one commit per change.
 | # | Change | State |
 |---|--------|-------|
 | 1 | Trimming Dashboard: 8 KPI cards (Overall Status, Current Status) with drill-down | Done |
+| 2 | Trimming → Find a Slab: five filters over Trimming Records | Done |
 
 Each change has the same headings as the earlier rounds' notes.
 
@@ -55,3 +56,33 @@ Migration `0011_trimming_attempts` — one new table, no row changed. Applied to
 - **In the browser** (demo records on the test database, removed afterwards): the eight cards showed 5 / 4 / 3 / 1 and 1 / 1 / 2 / 1, matching the records; Total Slabs Sent listed four rows, the twice-trimmed slab once per attempt.
 - **Tests:** typecheck clean; Vitest 610; node tests 81; workflows 95 steps; attendance 40; audit 82 checks; production build.
 
+---
+
+### Change #2: Trimming → Find a Slab
+
+#### Requirement (as given)
+
+> Update the Trimming section's subsection order to: 1. Dashboard 2. Trimming Without Design Printing 3. Find a Slab 4. Trimming Records. Only implement the missing Find a Slab subsection: the same 5 filter fields — Production Date, Batch Number, Slab Number, Base Material / Slab Name, File Name / Planned Design — with Clear Filters and Apply Filters. Apply Filters shows the matching records in the existing Trimming Records table; Clear Filters resets every field and restores the complete list. No duplicate table; no change to the Trimming workflows.
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **The same form as Recalibration's Find a Slab** — type-ahead dropdowns over the values in Trimming Records; each field a case-blind "contains", the date a plant day; any fields together.
+- **It reads what Trimming Records shows** — a production slab's own details, or a Without Design Printing slab's own entry.
+- **A KPI card chosen above stays chosen through a search**; Clear Filters returns to every record with no card chosen.
+- The count beside Trimming Records says what is shown ("All trimming slabs: 4 · filtered").
+
+#### Implemented
+
+- `src/app/chromia/trimming/find-a-slab.tsx` (new).
+- `src/lib/chromia/trimming-board.ts` — `parseTrimFilters`, `matchesTrimFilters`, `trimFilterOptions`, `buildTrimQuery`.
+- `src/app/chromia/trimming/page.tsx` — Find a Slab between Trimming Without Design Printing and Trimming Records.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **In the browser:** Batch "DB-2" + Material "carr" → the two matching rows, KPIs unchanged; Production Date alone → that day's rows; Clear Filters → all rows, fields empty. No console errors.
+- **Workflow:** Find a Slab by slab, batch and material finds the slab once; with Total Trimmed chosen, both its attempts; an unknown slab number finds nothing.
+- **Unit tests:** the five fields alone and together, the section order, and one table only.

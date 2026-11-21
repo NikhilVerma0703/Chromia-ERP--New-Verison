@@ -1,15 +1,24 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTrimQuery,
+  hasTrimFilters,
   inCurrentView,
+  matchesTrimFilters,
+  parseTrimFilters,
   trimBoardKpis,
   trimBoardRows,
+  trimFilterOptions,
   TRIM_BOARD_VIEWS,
   TRIM_CURRENT_VIEWS,
   TRIM_OVERALL_VIEWS,
   TRIM_VIEW_LABELS,
   type TrimBoardRecord,
 } from '@/lib/chromia/trimming-board';
+
+const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 const d = (day: string) => new Date(`${day}T00:00:00Z`);
 const attempt = (attemptNumber: number, sent?: string, received?: string, qc?: string) => ({
@@ -73,5 +82,59 @@ describe('Trimming Dashboard — eight KPIs (21 Nov 2026)', () => {
     expect(trimBoardRows(board, 'out').map((r) => r.recordId)).toEqual(['out', 'twice']);
     expect(trimBoardRows(board, null)).toHaveLength(board.length);
     expect(trimBoardRows(board, null).find((r) => r.recordId === 'twice')?.attemptNumber).toBe(2);
+  });
+});
+
+describe('Trimming → Find a Slab', () => {
+  const row = {
+    productionDate: new Date('2026-11-20T18:30:00Z'), // 21 Nov, plant day start
+    batchNo: 'B-117',
+    slabNo: 'S-2045',
+    baseMaterial: 'Statuario',
+    fileName: 'Calacatta Gold.tif',
+  };
+
+  it('reads the five fields and a card, and ignores junk', () => {
+    const f = parseTrimFilters({ productionDate: 'nope', batchNo: ' B-117 ', slabNo: '2045', view: 'bogus' });
+    expect(f.productionDate).toBe('');
+    expect(f.batchNo).toBe('B-117');
+    expect(f.view).toBeNull();
+    expect(hasTrimFilters(f)).toBe(true);
+    expect(hasTrimFilters(parseTrimFilters({ view: 'out' }))).toBe(false);
+  });
+
+  it('all five fields work together, each a case-blind contains', () => {
+    const all = parseTrimFilters({ productionDate: '2026-11-21', batchNo: 'b-117', slabNo: '2045', baseMaterial: 'statu', fileName: 'gold' });
+    expect(matchesTrimFilters(row, all)).toBe(true);
+    expect(matchesTrimFilters(row, { ...all, productionDate: '2026-11-20' })).toBe(false);
+    expect(matchesTrimFilters(row, { ...all, slabNo: '9999' })).toBe(false);
+    expect(matchesTrimFilters({ ...row, fileName: null }, { ...all, fileName: 'gold' })).toBe(false);
+    expect(matchesTrimFilters({ ...row, productionDate: null }, parseTrimFilters({}))).toBe(true);
+  });
+
+  it('offers the values on the rows, and keeps the card through a search', () => {
+    expect(trimFilterOptions([row, { ...row, slabNo: 'S-10' }]).slabNos).toEqual(['S-10', 'S-2045']);
+    const f = parseTrimFilters({ slabNo: 'S-1', view: 'ready' });
+    expect(buildTrimQuery(f)).toBe('slabNo=S-1&view=ready');
+    expect(buildTrimQuery(f, { view: '' })).toBe('slabNo=S-1');
+  });
+});
+
+describe('Trimming page — four sections, in the owner’s order', () => {
+  const page = read('src/app/chromia/trimming/page.tsx');
+
+  it('Dashboard, Trimming Without Design Printing, Find a Slab, Trimming Records', () => {
+    const at = ['title="Dashboard"', '<WithoutPrintingForm', '<TrimmingFindASlab', 'title="Trimming Records"'].map((s) => page.indexOf(s));
+    expect(at.every((i) => i > 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it('Find a Slab narrows the one Trimming Records table — no second table', () => {
+    expect(page.match(/<table/g)).toHaveLength(1);
+    const form = read('src/app/chromia/trimming/find-a-slab.tsx');
+    for (const name of ['productionDate', 'batchNo', 'slabNo', 'baseMaterial', 'fileName']) expect(form).toContain(`name="${name}"`);
+    expect(form).toContain('Clear Filters');
+    expect(form).toContain('Apply Filters');
+    expect(form).toContain('action={APP_ROUTES.trimming}');
   });
 });

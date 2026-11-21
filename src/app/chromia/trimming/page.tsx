@@ -25,6 +25,7 @@ import { loadBaseMaterialNames, loadRecentBatchNos } from '@/lib/chromia/server/
 import { requirePageUser } from '@/lib/pageUser';
 
 import { DeleteTrimmingButton } from './delete-trimming-button';
+import { TrimmingFindASlab } from './find-a-slab';
 import { TrimmingSlabLink } from './trimming-slab-link';
 import { WithoutPrintingForm } from './without-printing-form';
 import { chromiaCanDeleteSlab } from '@/lib/chromia/access';
@@ -76,7 +77,7 @@ const CARD_HINT: Record<TrimBoardView, string> = {
 /**
  * Trimming (7 Nov 2026) — in RECALIBRATION & TRIMMING, first.
  *
- * THREE SECTIONS, IN THIS ORDER (21 Nov 2026):
+ * FOUR SECTIONS, IN THIS ORDER (21 Nov 2026):
  *
  *   Dashboard                          OVERALL STATUS — four counts of trimming
  *                                      events, repeat attempts included;
@@ -86,6 +87,8 @@ const CARD_HINT: Record<TrimBoardView, string> = {
  *                                      its own rows (lib/chromia/trimming-board.ts);
  *   Trimming Without Design Printing   a slab trimmed without going on the
  *                                      line: Batch, Slab, Material, Thickness;
+ *   Find a Slab                        Production Date, Batch, Slab, Material,
+ *                                      Design — narrows Trimming Records;
  *   Trimming Records                   every slab graded C → Trimming on Slab
  *                                      Entry, and every one entered above,
  *                                      the latest first.
@@ -164,6 +167,22 @@ export default async function TrimmingPage({ searchParams }: { searchParams: Pro
 
       <div className="mb-6">
         <WithoutPrintingForm baseMaterials={baseMaterials} batchNos={batchNos} />
+      </div>
+
+      {/* ---------------------------------------------------- Find a Slab --- */}
+      <div className="mb-6">
+        <TrimmingFindASlab
+          key={buildTrimQuery(filters)}
+          options={board.options}
+          values={{
+            productionDate: filters.productionDate,
+            batchNo: filters.batchNo,
+            slabNo: filters.slabNo,
+            baseMaterial: filters.baseMaterial,
+            fileName: filters.fileName,
+            view: filters.view ?? '',
+          }}
+        />
       </div>
 
       {/* ----------------------------------------------- Trimming Records --- */}
