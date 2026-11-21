@@ -1256,9 +1256,36 @@ model ChromiaTrimming {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  /// Earlier trimmings of this slab, each kept when it is sent to Trimming
+  /// again (21 Nov 2026) — the Dashboard counts every attempt.
+  attempts ChromiaTrimmingAttempt[]
+
   @@index([source])
   @@index([createdAt])
   @@map("chromia_trimming")
+}
+
+/// One finished trimming of a slab, kept when the slab is graded C → Trimming
+/// again and its chromia_trimming record is cleared for the new one (21 Nov
+/// 2026). The record itself is always the latest attempt; these are the ones
+/// before it, numbered 1, 2, … in order.
+model ChromiaTrimmingAttempt {
+  id         String          @id @default(uuid())
+  trimmingId String          @map("trimming_id")
+  trimming   ChromiaTrimming @relation(fields: [trimmingId], references: [id], onDelete: Cascade)
+
+  attemptNumber Int                 @map("attempt_number")
+  trimFromMm    Decimal?            @map("trim_from_mm") @db.Decimal(18, 3)
+  trimToMm      Decimal?            @map("trim_to_mm") @db.Decimal(18, 3)
+  sentDate      DateTime?           @map("sent_date")
+  receivedDate  DateTime?           @map("received_date")
+  qcGrade       ChromiaSlabGrade?   @map("qc_grade")
+  qcDisposition ChromiaDisposition? @map("qc_disposition")
+  qcAt          DateTime?           @map("qc_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@unique([trimmingId, attemptNumber])
+  @@map("chromia_trimming_attempt")
 }
 
 /// A customer order, recorded on the Orders page (17 Nov 2026). Standalone:

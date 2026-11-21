@@ -22,7 +22,8 @@ import { deleteSlabRecordAction } from '@/lib/chromia/server/actions/slab-record
 import { sendFromStockAction } from '@/lib/chromia/server/actions/stockyard';
 import { alterFromDispatchedAction } from '@/lib/chromia/server/actions/dispatched-alter';
 import { addTrimmingWithoutPrintingAction, deleteTrimmingAction, updateTrimmingSlabAction } from '@/lib/chromia/server/actions/trimming';
-import { loadTrimmingRecord } from '@/lib/chromia/server/repositories/trimming-repository';
+import { loadTrimmingBoard, loadTrimmingRecord } from '@/lib/chromia/server/repositories/trimming-repository';
+import { parseTrimFilters, type TrimBoardKpis } from '@/lib/chromia/trimming-board';
 import { listSentFromStock } from '@/lib/chromia/server/repositories/stockyard-repository';
 import { updateStockyardSlabAction } from '@/lib/chromia/server/actions/stockyard-edit';
 import { loadProductionDashboard } from '@/lib/chromia/server/repositories/dashboard-repository';
@@ -490,6 +491,44 @@ async function main() {
     const refused = await correct(n('6'), 'B', 'STOCK');
     expect('refused', Boolean(refused.error), true);
   });
+
+  // ── Trimming Dashboard: a slab trimmed twice (21 Nov 2026) ─────────────
+  const trimKpis = async () => (await loadTrimmingBoard(parseTrimFilters({}))).kpis;
+  /** What one step changed on the Trimming Dashboard (only the cards that moved). */
+  const trimStep = async (what: string, run: () => Promise<unknown>, want: Partial<TrimBoardKpis>, overall: Record<string, number> = {}) => {
+    const before = await trimKpis();
+    await step(what, run, overall);
+    const after = await trimKpis();
+    const moved = Object.fromEntries(
+      Object.entries(after).map(([k, v]) => [k, v - before[k as keyof TrimBoardKpis]]).filter(([, v]) => v !== 0),
+    );
+    expect(`Trimming Dashboard after "${what}"`, moved, want);
+  };
+  const tw = n('21');
+  await trimStep('Trimming Dashboard: Grade C → Trimming — Ready', () => enter(tw, { grade: 'C', disposition: 'TRIMMING' }),
+    { trimmed: 1, ready: 1 }, { produced: 1, trimming: 1, todayProduced: 1 });
+  await trimStep('…3 cm → 2 cm, sent', () => trimForm(tw, { trimChoice: '30-20', sentDate: TODAY }),
+    { sent: 1, pending: 1, ready: -1, out: 1 });
+  await trimStep('…received — back, and available (no QC yet)', () => trimForm(tw, { receivedDate: TODAY }),
+    { received: 1, pending: -1, out: -1, returned: 1, available: 1 });
+  await trimStep('…QC Grade A → Stock — processed: no longer available; the trimming stays counted', () => trimForm(tw, { grade: 'A' }),
+    { available: -1 }, { trimming: -1, stock: 1 });
+  await trimStep('Edit: Stock → Trimming again (Grade C) — a 2nd trimming; the 1st is kept', () => correct(tw, 'C', 'TRIMMING'),
+    { trimmed: 1, ready: 1, returned: -1 }, { stock: -1, trimming: 1 });
+  const twRow = await trimRow(tw);
+  expect('the record is the 2nd trimming, cleared; the 1st kept with its dates and grade', [
+    twRow?.attemptNumber,
+    twRow?.status,
+    twRow?.attempts.map((a) => [a.attemptNumber, Boolean(a.sentDate), Boolean(a.receivedDate), a.qcGrade]),
+  ], [2, 'Ready for Trimming', [[1, true, true, 'A'], [2, false, false, null]]]);
+  await trimStep('…2nd trimming sent — both sends counted', () => trimForm(tw, { trimChoice: '20-12', sentDate: TODAY }),
+    { sent: 1, pending: 1, ready: -1, out: 1 });
+  const found = await loadTrimmingBoard(parseTrimFilters({ slabNo: tw, batchNo: BATCH, baseMaterial: MATERIAL }));
+  expect('Find a Slab: one row for the slab; Total Trimmed lists both attempts', [
+    found.rows.map((r) => r.slabNo),
+    (await loadTrimmingBoard(parseTrimFilters({ slabNo: tw, view: 'trimmed' }))).rows.map((r) => [r.attemptNumber, r.status]),
+  ], [[tw], [[2, 'Sent for Trimming (2 cm → 1.2 cm)'], [1, 'Trimmed — Grade A: Stock']]]);
+  expect('Find a Slab: a slab number that is not there finds nothing', (await loadTrimmingBoard(parseTrimFilters({ slabNo: `${tw}-none` }))).rows.length, 0);
 
   // ── Edits never duplicate ─────────────────────────────────────────────
   await step('Slab Records Edit: thickness corrected — the same record', async () =>

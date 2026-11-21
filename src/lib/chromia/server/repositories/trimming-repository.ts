@@ -3,6 +3,15 @@ import { ChromiaDisposition as Disposition, ChromiaSlabStatus as SlabStatus, Chr
 import { prisma } from '@/lib/chromia/db';
 import { physicalSlabWhere } from '@/lib/chromia/server/repositories/physical-slabs';
 import { trimmingStage, trimmingStatus, type TrimmingStage } from '@/lib/chromia/trimming';
+import {
+  matchesTrimFilters,
+  trimBoardKpis,
+  trimBoardRows,
+  trimFilterOptions,
+  type TrimAttempt,
+  type TrimBoardKpis,
+  type TrimFilters,
+} from '@/lib/chromia/trimming-board';
 
 /**
  * Trimming — data access (7 Nov 2026; the records, 0008).
@@ -61,6 +70,20 @@ const RECORD_FIELDS = {
   qcAt: true,
   createdAt: true,
   slab: { select: SLAB_FIELDS },
+  // Earlier trimmings of the slab (0011), for the Dashboard's attempt counts.
+  attempts: {
+    orderBy: { attemptNumber: 'asc' },
+    select: {
+      attemptNumber: true,
+      trimFromMm: true,
+      trimToMm: true,
+      sentDate: true,
+      receivedDate: true,
+      qcGrade: true,
+      qcDisposition: true,
+      qcAt: true,
+    },
+  },
 } satisfies Prisma.ChromiaTrimmingSelect;
 
 type StoredRecord = Prisma.ChromiaTrimmingGetPayload<{ select: typeof RECORD_FIELDS }>;
@@ -102,6 +125,21 @@ export interface TrimmingRow {
   stage: TrimmingStage;
   status: string;
   createdAt: Date;
+  /** Which trimming of the slab this is — 1 unless it was sent to Trimming again. */
+  attemptNumber: number;
+  /** Every trimming of the slab, oldest first; the last is this record's own. */
+  attempts: TrimmingAttemptRow[];
+}
+
+/** One trimming of a slab, as its row shows it. */
+export interface TrimmingAttemptRow extends TrimAttempt {
+  trimFromMm: number | null;
+  trimToMm: number | null;
+  sentDate: Date | null;
+  receivedDate: Date | null;
+  qcGrade: string | null;
+  qcDisposition: string | null;
+  qcAt: Date | null;
 }
 
 function shape(record: StoredRecord): TrimmingRow {
@@ -115,6 +153,17 @@ function shape(record: StoredRecord): TrimmingRow {
     qcGrade: record.qcGrade,
     qcDisposition: record.qcDisposition,
   };
+  const earlier: TrimmingAttemptRow[] = record.attempts.map((a) => ({
+    attemptNumber: a.attemptNumber,
+    trimFromMm: mm(a.trimFromMm),
+    trimToMm: mm(a.trimToMm),
+    sentDate: a.sentDate,
+    receivedDate: a.receivedDate,
+    qcGrade: a.qcGrade,
+    qcDisposition: a.qcDisposition,
+    qcAt: a.qcAt,
+  }));
+  const attemptNumber = (earlier[earlier.length - 1]?.attemptNumber ?? 0) + 1;
   return {
     id: record.id,
     source: record.source,
@@ -134,6 +183,8 @@ function shape(record: StoredRecord): TrimmingRow {
     stage: trimmingStage(state),
     status: trimmingStatus(state),
     createdAt: record.createdAt,
+    attemptNumber,
+    attempts: [...earlier, { attemptNumber, ...state, qcAt: record.qcAt }],
   };
 }
 
@@ -168,4 +219,39 @@ export async function trimmingPlaceSlabIds(): Promise<string[]> {
     select: { slabId: true },
   });
   return rows.map((row) => row.slabId as string);
+}
+
+/** A Trimming Records row for one attempt — the record's details, that attempt's trimming. */
+export function rowForAttempt(row: TrimmingRow, attemptNumber: number): TrimmingRow {
+  const attempt = row.attempts.find((a) => a.attemptNumber === attemptNumber);
+  if (!attempt || attemptNumber === row.attemptNumber) return row;
+  const state = {
+    trimFromMm: attempt.trimFromMm,
+    trimToMm: attempt.trimToMm,
+    sentDate: attempt.sentDate,
+    receivedDate: attempt.receivedDate,
+    qcGrade: attempt.qcGrade,
+    qcDisposition: attempt.qcDisposition,
+  };
+  return { ...row, ...state, attemptNumber, stage: trimmingStage(state), status: trimmingStatus(state) };
+}
+
+/**
+ * The Trimming page, once (21 Nov 2026): the eight Dashboard KPIs over every
+ * record (never narrowed by Find a Slab, as on Recalibration), and the
+ * Trimming Records rows — the chosen KPI card's, narrowed by Find a Slab.
+ */
+export async function loadTrimmingBoard(filters: TrimFilters): Promise<{
+  kpis: TrimBoardKpis;
+  rows: TrimmingRow[];
+  /** How many records there are in all — the header's count. */
+  records: number;
+  options: ReturnType<typeof trimFilterOptions>;
+}> {
+  const all = await listTrimmingRecords();
+  const kpis = trimBoardKpis(all);
+  const matching = all.filter((row) => matchesTrimFilters(row, filters));
+  const byId = new Map(matching.map((row) => [row.id, row]));
+  const rows = trimBoardRows(matching, filters.view).map((r) => rowForAttempt(byId.get(r.recordId)!, r.attemptNumber));
+  return { kpis, rows, records: all.length, options: trimFilterOptions(all) };
 }

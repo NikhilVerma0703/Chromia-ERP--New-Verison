@@ -12,9 +12,9 @@ const numOrNull = (value: unknown) => (value === null || value === undefined ? n
  *
  * One record per slab. Graded C → Trimming again before anything was done to
  * it (a QC correction there and back), it keeps what was saved. Graded so
- * again AFTER an earlier trimming was finished, the record's fields are
- * cleared for the new trimming, and the slab's history says what the earlier
- * one was.
+ * again AFTER an earlier trimming was finished, that trimming is kept as a
+ * chromia_trimming_attempt (21 Nov 2026), the record's fields are cleared for
+ * the new trimming, and the slab's history says what the earlier one was.
  *
  * A module of its own so the QC save can call it without importing the rest
  * of the Trimming service (which itself grades through applyIntakeGrade).
@@ -26,6 +26,22 @@ export async function openTrimmingRecord(tx: ChromiaTx, slabId: string, userId: 
     return;
   }
   if (!existing.qcAt) return;
+  // The finished trimming is kept as an attempt of its own (21 Nov 2026), so
+  // the Trimming Dashboard counts it — the record is the new attempt.
+  const earlier = await tx.chromiaTrimmingAttempt.count({ where: { trimmingId: existing.id } });
+  await tx.chromiaTrimmingAttempt.create({
+    data: {
+      trimmingId: existing.id,
+      attemptNumber: earlier + 1,
+      trimFromMm: existing.trimFromMm,
+      trimToMm: existing.trimToMm,
+      sentDate: existing.sentDate,
+      receivedDate: existing.receivedDate,
+      qcGrade: existing.qcGrade,
+      qcDisposition: existing.qcDisposition,
+      qcAt: existing.qcAt,
+    },
+  });
   await tx.chromiaTrimming.update({
     where: { id: existing.id },
     data: { trimFromMm: null, trimToMm: null, sentDate: null, receivedDate: null, qcGrade: null, qcDisposition: null, qcAt: null, updatedById: userId },
