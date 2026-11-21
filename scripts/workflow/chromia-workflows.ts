@@ -282,17 +282,17 @@ async function main() {
     // Ready is the FIRST send only: a repeat send leaves it as it is.
     await step(`Attempt ${attempt}: sent`, () => recalibrationForm(n('5'), { sentDate: TODAY }), { ...(attempt === 1 ? { ready: -1 } : {}), sent: 1, pending: 1, out: 1 });
     expect(`attempt ${attempt} out`, await statusOf(n('5')), { status: 'OUT_FOR_RECALIBRATION', location: 'EXTERNAL_FACILITY', label: `Sent for ${ord} Time Recalibration` });
-    await step(`Attempt ${attempt}: received`, () => recalibrationForm(n('5'), { receivedDate: TODAY }), { received: 1, pending: -1, out: -1, returned: 1 });
+    await step(`Attempt ${attempt}: received`, () => recalibrationForm(n('5'), { receivedDate: TODAY }), { received: 1, pending: -1, out: -1, returned: 1, available: 1 });
     expect(`attempt ${attempt} back`, await statusOf(n('5')), { status: 'RECEIVED_FROM_RECALIBRATION', location: 'YARD', label: `Received from the ${ord} Time Recalibration` });
-    // Reprinted: off "Received", on "Available after Recalibration".
-    await step(`Attempt ${attempt}: back on the line`, () => recalibrationForm(n('5'), { inTime: '11:00' }), { recalibration: -1, inProcessing: 1, returned: -1, available: 1 });
+    // Reprinted: off "Received", and off "Available after Recalibration" (21 Nov 2026).
+    await step(`Attempt ${attempt}: back on the line`, () => recalibrationForm(n('5'), { inTime: '11:00' }), { recalibration: -1, inProcessing: 1, returned: -1, available: -1 });
     expect(`attempt ${attempt} in processing`, (await statusOf(n('5'))).label, `In Processing — After Attempt ${attempt}`);
     if (attempt < 5) {
-      await step(`Attempt ${attempt}: QC Grade C again — Need the next`, () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1, recalibrated: 1, available: -1 });
+      await step(`Attempt ${attempt}: QC Grade C again — Need the next`, () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1, recalibrated: 1 });
       expect(`after attempt ${attempt}`, (await statusOf(n('5'))).label, `Need ${['2nd', '3rd', '4th', '5th'][attempt - 1]} Time Recalibration`);
     }
   }
-  await step('After the 5th: Grade C again — written off', () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1, available: -1 });
+  await step('After the 5th: Grade C again — written off', () => recalibrationForm(n('5'), { grade: 'C', disposition: 'RECALIBRATION', recalibrationReason: 'Pinholes' }), { recalibration: 1, inProcessing: -1 });
   // The whole history of one slab, five times over: 5 records, 5 sends, 5 receipts.
   expect('Overall Status counts every attempt of …5', await (async () => {
     const t = await prisma.chromiaRecalibrationCycle.findMany({ where: { slab: { slabNo: n('5') } } });
@@ -301,8 +301,8 @@ async function main() {
   expect('written off', (await statusOf(n('5'))).label, 'Written Off / Waste');
 
   await step('QC: Grade C → Recalibration (a second slab)', () => enter(n('6'), { grade: 'C', disposition: 'RECALIBRATION', reason: 'Half Print' }), { produced: 1, recalibration: 1, recalibrated: 1, ready: 1, todayProduced: 1 });
-  await step('…sent and received in one save', () => recalibrationForm(n('6'), { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1, returned: 1 });
-  await step('…its new pass, graded A → Stock: cleared into Current Stock', () => recalibrationForm(n('6'), { inTime: '12:00', grade: 'A' }), { recalibration: -1, stock: 1, returned: -1 });
+  await step('…sent and received in one save', () => recalibrationForm(n('6'), { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1, returned: 1, available: 1 });
+  await step('…its new pass, graded A → Stock: cleared into Current Stock', () => recalibrationForm(n('6'), { inTime: '12:00', grade: 'A' }), { recalibration: -1, stock: 1, returned: -1, available: -1 });
   expect('cleared', (await statusOf(n('6'))).status, 'IN_STOCK');
   await step('…and dispatched from the Stockyard', () => sent(n('6'), 'DISPATCH'), { stock: -1, dispatched: 1 });
 
@@ -474,8 +474,8 @@ async function main() {
     (await statusOf(e)).location !== 'EXTERNAL_FACILITY',
   ], [0, { recalibrationCount: 0, isRecalibrationOut: false }, true]);
   await step('Edit: Stock → Recalibration again', () => correct(e, 'C', 'RECALIBRATION', 'Pinholes'), { stock: -1, recalibration: 1, recalibrated: 1, ready: 1 });
-  await step('…sent and received', () => recalibrationForm(e, { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1, returned: 1 });
-  await step('Edit once it is back: Recalibration → Stock (Grade A) — its next pass, graded', () => correct(e, 'A', 'STOCK'), { recalibration: -1, stock: 1, returned: -1 });
+  await step('…sent and received', () => recalibrationForm(e, { sentDate: TODAY, receivedDate: TODAY }), { ready: -1, sent: 1, received: 1, returned: 1, available: 1 });
+  await step('Edit once it is back: Recalibration → Stock (Grade A) — its next pass, graded', () => correct(e, 'A', 'STOCK'), { recalibration: -1, stock: 1, returned: -1, available: -1 });
   expect('the trip stays, restarted; the slab is on its 2nd pass, in stock', [
     (await trips(e)).map((t) => [t.attemptNumber, Boolean(t.sentDate), Boolean(t.receivedDate), Boolean(t.restartedAt)]),
     (await prisma.chromiaSlab.findUniqueOrThrow({ where: { slabNo: e }, select: { currentCycleNumber: true, status: true } })),

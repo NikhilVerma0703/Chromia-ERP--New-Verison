@@ -148,9 +148,19 @@ export async function auditConsistency(now: Date = new Date()): Promise<AuditChe
   }
   same('Recalibration Pending = Sent − Received', board.kpis.sent - board.kpis.received, board.kpis.pending);
   none('Recalibration Sent ≤ Recalibrated, Received ≤ Sent', board.kpis.sent > board.kpis.recalibrated || board.kpis.received > board.kpis.sent ? ['out of order'] : []);
-  // Current Status: each slab in one card at most, and once.
-  const currentRows = CURRENT_VIEWS.flatMap((view) => boardRows(board.states, view).map((r) => r.slabId));
+  // Current Status: each slab in one of Ready, Sent and Received at most, and
+  // once — Available counts receipts (21 Nov 2026), checked on its own below.
+  const currentRows = CURRENT_VIEWS.filter((view) => view !== 'available').flatMap((view) => boardRows(board.states, view).map((r) => r.slabId));
   none('Recalibration Current Status counts each slab once', currentRows.filter((id, i) => currentRows.indexOf(id) !== i));
+  // Available = Total Received − the receipts already reprinted (or written off).
+  const reprintedOrGone = board.states.reduce(
+    (n, slab) => n + slab.trips.filter((t) => t.sentDate && t.receivedDate && (t.restartedAt || slab.writtenOff)).length,
+    0,
+  );
+  same('Recalibration Available = Total Received − receipts reprinted', board.kpis.available, board.kpis.received - reprintedOrGone);
+  // Every slab in Received from Recalibration has its receipt waiting in Available.
+  const availableIds = new Set(boardRows(board.states, 'available').map((r) => r.slabId));
+  none('Recalibration Received slabs are all in Available', boardRows(board.states, 'returned').map((r) => r.slabId).filter((id) => !availableIds.has(id)));
   // A slab out now has exactly one attempt out: Sent for Recalibration (slabs) = Pending (sends).
   same('Recalibration Sent now (slabs) = Pending (sends)', board.kpis.out, board.kpis.pending);
   const trackingKpis = buildTrackingKpis(tracking);

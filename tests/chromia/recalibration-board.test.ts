@@ -75,17 +75,17 @@ describe('Recalibration Dashboard — the eight KPIs (19 Nov 2026)', () => {
     expect(kpis.out).toBe(2);
     // Received, not yet reprinted: back1.
     expect(kpis.returned).toBe(1);
-    // Reprinted, awaiting QC: inprod.
+    // Received and not yet reprinted, any attempt (21 Nov 2026): back1 — every other receipt was reprinted.
     expect(kpis.available).toBe(1);
     expect(Object.fromEntries(board.map((s) => [s.id, currentPositionOf(s)]))).toEqual({
-      ready: 'ready', out1: 'out', back1: 'returned', inprod: 'available', need2: null, out2: 'out', clearedA: null,
+      ready: 'ready', out1: 'out', back1: 'returned', inprod: null, need2: null, out2: 'out', clearedA: null,
     });
-    // No slab in two cards.
-    const ids = CURRENT_VIEWS.flatMap((v) => boardRows(board, v).map((r) => r.slabId));
+    // No slab in two of Ready, Sent and Received (Available counts receipts).
+    const ids = CURRENT_VIEWS.filter((v) => v !== 'available').flatMap((v) => boardRows(board, v).map((r) => r.slabId));
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('the owner\'s examples: 11 first attempts + 5 repeats = 16; 3 sent, 2 received, 1 reprinted → Available 1', () => {
+  it('the owner\'s examples: 11 first attempts + 5 repeats = 16; 3 sent, 2 received, 1 reprinted → Available 1 (the one not reprinted)', () => {
     const many: BoardSlab[] = [
       ...Array.from({ length: 6 }, (_, i) => ({ id: `once${i}`, disposition: 'STOCK', writtenOff: false, trips: [trip(1, '2026-09-01', '2026-09-05', '2026-09-06')] })),
       ...Array.from({ length: 5 }, (_, i) => ({
@@ -103,8 +103,31 @@ describe('Recalibration Dashboard — the eight KPIs (19 Nov 2026)', () => {
     ];
     const k = boardKpis(three);
     expect([k.sent, k.received, k.out, k.returned, k.available]).toEqual([3, 2, 1, 1, 1]);
-    // Available = received this cycle (2) − still waiting for reprinting (1).
-    expect(k.available).toBe(k.received - k.returned);
+    // Available (21 Nov 2026) = Total Received (2) − already reprinted (1): 'back'.
+    expect(boardRows(three, 'available')).toEqual([{ slabId: 'back', attemptNumber: 1 }]);
+  });
+
+  it('Available counts receipts of EVERY attempt not yet reprinted, and leaves out written-off slabs (21 Nov 2026)', () => {
+    const slabs: BoardSlab[] = [
+      // A: 1st receipt reprinted, 2nd received and waiting.
+      { id: 'A', disposition: 'RECALIBRATION', writtenOff: false, trips: [trip(1, '2026-10-01', '2026-10-03', '2026-10-04'), trip(2, '2026-10-10', '2026-10-12')] },
+      // B: received once and reprinted.
+      { id: 'B', disposition: null, writtenOff: false, trips: [trip(1, '2026-10-01', '2026-10-03', '2026-10-04')] },
+      // C: received once, waiting.
+      { id: 'C', disposition: 'RECALIBRATION', writtenOff: false, trips: [trip(1, '2026-10-01', '2026-10-03')] },
+      // D: a 1st receipt never reprinted, on a slab out again (as data may hold).
+      { id: 'D', disposition: 'RECALIBRATION', writtenOff: false, trips: [trip(1, '2026-09-01', '2026-09-03'), trip(2, '2026-10-20')] },
+      // W: written off — never reprinted, so not available.
+      { id: 'W', disposition: 'RECALIBRATION', writtenOff: true, trips: [trip(1, '2026-09-01', '2026-09-03')] },
+    ];
+    const k = boardKpis(slabs);
+    expect(k.received).toBe(6);
+    expect(k.available).toBe(3);
+    expect(boardRows(slabs, 'available')).toEqual([
+      { slabId: 'A', attemptNumber: 2 },
+      { slabId: 'C', attemptNumber: 1 },
+      { slabId: 'D', attemptNumber: 1 },
+    ]);
   });
 
   it('each card lists exactly what it counts — all eight', () => {

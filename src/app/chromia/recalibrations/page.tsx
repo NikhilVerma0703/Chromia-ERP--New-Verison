@@ -65,7 +65,7 @@ const CARD_HINT: Record<BoardView, string> = {
   ready: 'slabs awaiting their first send',
   out: 'slabs out now, awaiting receipt',
   returned: 'slabs back, awaiting reprinting',
-  available: 'slabs reprinted, awaiting QC',
+  available: 'receipts of every attempt, not yet reprinted',
 };
 
 /**
@@ -122,7 +122,7 @@ export default async function RecalibrationsPage({ searchParams }: { searchParam
           {(
             [
               ['OVERALL STATUS', 'All recalibration activity from the beginning — a slab sent twice counts twice.', OVERALL_VIEWS],
-              ['CURRENT STATUS', 'Where each slab is now — every slab counted once.', CURRENT_VIEWS],
+              ['CURRENT STATUS', 'Where each slab is now — every slab counted once; Available counts every receipt, of any attempt, still waiting for reprinting.', CURRENT_VIEWS],
             ] as const
           ).map(([heading, about, views], i) => (
             <section key={heading} aria-labelledby={`recal-${i}`} className={i === 0 ? 'mb-6' : ''}>

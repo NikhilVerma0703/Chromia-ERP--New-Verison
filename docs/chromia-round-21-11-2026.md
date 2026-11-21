@@ -11,6 +11,7 @@ one commit per change.
 | 1 | Trimming Dashboard: 8 KPI cards (Overall Status, Current Status) with drill-down | Done |
 | 2 | Trimming → Find a Slab: five filters over Trimming Records | Done |
 | 3 | Orders: Printing Completed? (Yes / No) and the Printing Status column, for every role | Done |
+| 4 | Available Slabs after Recalibration / after Trimming: every receipt, of any attempt, not yet reprinted | Done |
 
 Each change has the same headings as the earlier rounds' notes.
 
@@ -121,3 +122,37 @@ Migration `0012_order_printing_completed` — one nullable column, no row change
 - **As the Chromia Operator:** the same field and column; no Customer Name, Order Initiated By or Delete. Edit opened with No chosen; changed to Yes and updated, Recent Orders read "Printing Completed" in plain text, and the order kept its customer name.
 - **Workflow (test database):** an operator's new order saved with No, changed to Yes through Edit, shown so in Recent Orders, customer still empty.
 - **Tests:** typecheck clean; Vitest 615; node tests 81; workflows 96 steps; audit 82 checks; production build.
+
+---
+
+### Change #4: Correct Available Slabs Calculation
+
+#### Requirement (as given)
+
+> Update the calculation of Available Slabs after Recalibration and Available Slabs after Trimming. Use Total Slabs Received (cumulative, every attempt — 1st to 5th — with a Received Date) − Slabs Remaining for Reprinting; count all valid historical receipts across repeated attempts, exclude those already reprinted, and do not use only the current-stage Received KPI. Expected: both KPIs show all received slabs across every attempt that are still awaiting reprinting. Preserve every other KPI, the layouts and the workflows.
+
+#### Decisions taken (confirmed by the owner, 21 Nov 2026)
+
+- The formula and the expected result could be read two ways, so the owner chose with an example (A received twice — 1st reprinted, 2nd not; B received once and reprinted; C received once, not): **Available = 2 — A's 2nd and C, the receipts not yet reprinted.** That is: Total Received (every attempt) minus the receipts already reprinted.
+- **Recalibration:** a receipt is a trip with a Received Date; it is reprinted once its slab went back on the line after it (the trip's restart). A written-off slab is never reprinted, so its receipts are not counted.
+- **Trimming:** a receipt is a trimming with a Received Date; it is "reprinted / processed" once its QC Report after trimming is saved.
+- **Available is now counted by receipt, one row per receipt** (with its attempt number) when its card is clicked. A slab back and waiting is therefore in both Received and Available; Ready, Sent and Received still count each slab once.
+- In the normal flow only a slab's latest receipt can be waiting, so Available usually equals the waiting slabs; an earlier receipt that was never reprinted (e.g. from a correction) is now counted too, instead of being missed.
+- This replaces the 19 Nov definition on Recalibration (reprinted, awaiting QC) and the first Trimming definition of this round (latest trimming only). Nothing else changed: the other six cards, the layouts and the workflows are as they were.
+
+#### Implemented
+
+- `src/lib/chromia/recalibration-board.ts` — `availableTrip`; Available counted and listed per receipt; `currentPositionOf` no longer places a slab in Available.
+- `src/lib/chromia/trimming-board.ts` — `availableAttempt`; Available counted and listed per receipt.
+- `src/app/chromia/recalibrations/page.tsx`, `src/app/chromia/trimming/page.tsx` — the cards' hint lines.
+- `src/lib/chromia/server/audit/consistency.ts` — Ready / Sent / Received still each slab once; two new checks: Available = Total Received − receipts reprinted, and every slab in Received is in Available.
+
+#### Database
+
+None.
+
+#### Verified
+
+- **Workflow (test database):** each recalibration receipt (attempts 1–5) adds 1 to Available and going back on the line takes it off; a slab cleared to Stock leaves Available; the trimming steps are unchanged.
+- **In the browser** (demo records on the test database, removed afterwards): Trimming Available 2 — the 2nd slab's receipt and an earlier, never-processed receipt of a slab now out again — and its rows; Recalibration's cards with the new hint.
+- **Tests:** typecheck clean; Vitest 617; node tests 81; workflows 96 steps; audit 84 checks (test and local databases); production build.

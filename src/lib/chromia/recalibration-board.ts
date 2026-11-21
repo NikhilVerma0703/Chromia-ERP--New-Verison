@@ -18,16 +18,23 @@
  *                                trip cannot be received before it is sent —
  *                                saveTrip refuses).
  *
- *   CURRENT STATUS — now: SLABS, each in at most one card (currentPositionOf).
+ *   CURRENT STATUS — now.
  *     Ready for Recalibration    awaiting its FIRST send ("Ready for
  *                                Recalibration"); a slab waiting for a 2nd or
  *                                later send is in no card (the owner's choice);
  *     Sent for Recalibration     out at recalibration now, on any attempt;
  *     Received from Recalibration back, not yet reprinted (back on the line);
- *     Available after Recal.     reprinted after its latest attempt, awaiting
- *                                QC = (received in this cycle) − (still waiting
- *                                for reprinting). It leaves the card when QC
- *                                clears it or sends it back.
+ *     Available after Recal.     (21 Nov 2026, the owner's correction) every
+ *                                RECEIPT, on any attempt — 1st to 5th — with a
+ *                                Received Date and not yet reprinted (no
+ *                                restart on that trip): Total Received minus
+ *                                the receipts already reprinted. A receipt
+ *                                leaves the card when its slab goes back on
+ *                                the line. A written-off slab is never
+ *                                reprinted, so its receipts are not counted.
+ *   Ready, Sent and Received are slabs, each in at most one of them
+ *   (currentPositionOf); Available is receipts, so a slab back and waiting is
+ *   in Received and in Available.
  *
  * Every card is a view of the table: the Overall cards list one row per event
  * (with its attempt number and dates), the Current cards one row per slab.
@@ -91,14 +98,19 @@ export function currentPositionOf(slab: BoardSlab): CurrentView | null {
       return 'out';
     case 'RETURNED':
       return 'returned';
-    case 'IN_PRODUCTION': {
-      // Reprinted: its latest attempt came back and it went back on the line.
-      const latest = [...slab.trips].sort(byAttemptDesc)[0];
-      return latest?.sentDate && latest.receivedDate && latest.restartedAt ? 'available' : null;
-    }
     default:
+      // Available is counted by receipt, not by where the slab is (availableTrip).
       return null;
   }
+}
+
+/**
+ * Available Slabs after Recalibration (21 Nov 2026): a trip that came back —
+ * Received Date saved — and was not reprinted after it (no restart), on a
+ * slab that is not written off. Any attempt, 1st to 5th.
+ */
+export function availableTrip(slab: BoardSlab, trip: Trip): boolean {
+  return Boolean(trip.sentDate && trip.receivedDate && !trip.restartedAt && !slab.writtenOff);
 }
 
 /** Does this trip belong in an OVERALL view? Each is one event, counted by its own record. */
@@ -126,6 +138,7 @@ export function boardKpis(slabs: readonly BoardSlab[]): BoardKpis {
     for (const trip of slab.trips) for (const view of OVERALL_VIEWS) if (inOverallView(trip, view)) kpis[view] += 1;
     const position = currentPositionOf(slab);
     if (position) kpis[position] += 1;
+    for (const trip of slab.trips) if (availableTrip(slab, trip)) kpis.available += 1;
   }
   return kpis;
 }
@@ -148,6 +161,11 @@ export function boardRows(slabs: readonly BoardSlab[], view: BoardView | null): 
     } else if (isOverall(view)) {
       for (const trip of [...slab.trips].sort(byAttemptDesc)) {
         if (inOverallView(trip, view)) rows.push({ slabId: slab.id, attemptNumber: trip.attemptNumber });
+      }
+    } else if (view === 'available') {
+      // A row per receipt still waiting for reprinting, newest attempt first.
+      for (const trip of [...slab.trips].sort(byAttemptDesc)) {
+        if (availableTrip(slab, trip)) rows.push({ slabId: slab.id, attemptNumber: trip.attemptNumber });
       }
     } else if (currentPositionOf(slab) === view) {
       rows.push({ slabId: slab.id, attemptNumber: rowTrip(slab)?.attemptNumber ?? attemptsUsed(slab.trips) + 1 });

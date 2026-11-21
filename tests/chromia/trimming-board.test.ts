@@ -72,6 +72,19 @@ describe('Trimming Dashboard — eight KPIs (21 Nov 2026)', () => {
     expect(inCurrentView(board[3], 'available')).toBe(false);
   });
 
+  it('Available counts receipts of every attempt not yet processed (21 Nov 2026)', () => {
+    const records: TrimBoardRecord[] = [
+      // An earlier trimming received and never processed (as data may hold), then sent again.
+      { id: 'x', attempts: [attempt(1, '2026-10-01', '2026-10-03'), attempt(2, '2026-11-01')] },
+      { id: 'y', attempts: [attempt(1, '2026-10-01', '2026-10-03', '2026-10-04'), attempt(2, '2026-11-01', '2026-11-03')] },
+    ];
+    expect(trimBoardKpis(records).available).toBe(2);
+    expect(trimBoardRows(records, 'available')).toEqual([
+      { recordId: 'x', attemptNumber: 1 },
+      { recordId: 'y', attemptNumber: 2 },
+    ]);
+  });
+
   it('every card’s count is exactly the rows it shows', () => {
     const k = trimBoardKpis(board);
     for (const view of TRIM_BOARD_VIEWS) expect(trimBoardRows(board, view).length).toBe(k[view]);

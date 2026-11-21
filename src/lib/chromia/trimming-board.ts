@@ -27,9 +27,12 @@
  *                              Grade C → Trimming and Without Design Printing;
  *     Sent for Trimming        out at trimming, awaiting receipt;
  *     Received from Trimming   back from trimming (Received Date saved);
- *     Available after Trimming received, and not yet processed: no QC Report
- *                              after trimming saved, so not reprinted / graded
- *                              / sent on = (Received) − (already processed).
+ *     Available after Trimming (21 Nov 2026, the owner's correction) every
+ *                              RECEIPT, on any attempt, with a Received Date
+ *                              and not yet processed — no QC Report after
+ *                              that trimming, so not reprinted / graded / sent
+ *                              on: Total Received minus the receipts already
+ *                              processed. One row per receipt.
  */
 import { isPlantDayKey, plantDayRange } from '@/lib/chromia/plant-time';
 import type { RawSearchParams } from '@/lib/chromia/simple-filters';
@@ -92,8 +95,13 @@ export function inCurrentView(record: TrimBoardRecord, view: TrimCurrentView): b
     case 'returned':
       return back;
     case 'available':
-      return back && !now.qcAt;
+      return record.attempts.some((a) => availableAttempt(a));
   }
+}
+
+/** Available after Trimming (21 Nov 2026): this trimming came back and nothing was done after it yet. */
+export function availableAttempt(attempt: TrimAttempt): boolean {
+  return Boolean(attempt.sentDate && attempt.receivedDate && !attempt.qcAt);
 }
 
 /** Does this attempt belong in an OVERALL view? Each is one event. */
@@ -125,6 +133,11 @@ export function trimBoardRows(records: readonly TrimBoardRecord[], view: TrimBoa
     } else if (isOverall(view)) {
       for (const attempt of [...record.attempts].reverse()) {
         if (inOverallView(attempt, view)) rows.push({ recordId: record.id, attemptNumber: attempt.attemptNumber });
+      }
+    } else if (view === 'available') {
+      // A row per receipt still waiting, newest attempt first.
+      for (const attempt of [...record.attempts].reverse()) {
+        if (availableAttempt(attempt)) rows.push({ recordId: record.id, attemptNumber: attempt.attemptNumber });
       }
     } else if (inCurrentView(record, view)) {
       rows.push({ recordId: record.id, attemptNumber: now.attemptNumber });

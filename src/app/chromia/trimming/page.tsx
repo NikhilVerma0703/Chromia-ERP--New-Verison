@@ -71,7 +71,7 @@ const CARD_HINT: Record<TrimBoardView, string> = {
   ready: 'slabs marked for Trimming, not yet sent',
   out: 'slabs out now, awaiting receipt',
   returned: 'slabs back from trimming',
-  available: 'slabs back, not yet reprinted / processed',
+  available: 'receipts of every attempt, not yet reprinted / processed',
 };
 
 /**
@@ -124,7 +124,7 @@ export default async function TrimmingPage({ searchParams }: { searchParams: Pro
           {(
             [
               ['OVERALL STATUS', 'All trimming activity from the beginning — a slab trimmed twice counts twice, and stays counted after QC clears it.', TRIM_OVERALL_VIEWS],
-              ['CURRENT STATUS', 'Where each slab is now — by its latest trimming.', TRIM_CURRENT_VIEWS],
+              ['CURRENT STATUS', 'Where each slab is now — by its latest trimming; Available counts every receipt, of any attempt, not yet reprinted / processed.', TRIM_CURRENT_VIEWS],
             ] as const
           ).map(([heading, about, views], i) => (
             <section key={heading} aria-labelledby={`trim-${i}`} className={i === 0 ? 'mb-6' : ''}>
