@@ -59,6 +59,26 @@ export function quantityTotal(rows: readonly { quantity: number | null }[]): num
   return rows.reduce((sum, row) => sum + (row.quantity ?? 0), 0);
 }
 
+/**
+ * Printing Completed? (21 Nov 2026) — Yes or No on the form, right after the
+ * Requested Delivery Date; every role's, the Chromia Operator's included.
+ * Stored as true / false, and null for an order where nobody has chosen yet.
+ */
+export const PRINTING_COMPLETED_OPTIONS = [
+  { value: 'YES', label: 'Yes' },
+  { value: 'NO', label: 'No' },
+] as const;
+
+/** The form's choice for a stored value: 'YES', 'NO' or '' (not chosen). */
+export function printingChoiceOf(printingCompleted: boolean | null | undefined): string {
+  return printingCompleted === true ? 'YES' : printingCompleted === false ? 'NO' : '';
+}
+
+/** The Printing Status column's words, or null when nothing was chosen. */
+export function printingStatusLabel(printingCompleted: boolean | null | undefined): string | null {
+  return printingCompleted === true ? 'Printing Completed' : printingCompleted === false ? 'Printing NOT Completed' : null;
+}
+
 export type OrderStatus = 'PENDING' | 'COMPLETED';
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
@@ -124,6 +144,7 @@ export const orderFormSchema = z
     finishing: z.string().trim(),
     finishingOther: optionalText(60, 'Finishing type'),
     requestedDeliveryDate: dayField,
+    printingCompleted: z.enum(['', 'YES', 'NO'], { message: 'Choose Yes or No' }),
     actualDeliveryDate: dayField,
     personInCharge: optionalText(120, 'Person In-Charge name'),
     remarks: optionalText(1000, 'Remarks'),
@@ -154,6 +175,7 @@ export interface OrderValues {
   thicknessMm: number | null;
   finishingType: string | null;
   requestedDeliveryDate: Date | null;
+  printingCompleted: boolean | null;
   actualDeliveryDate: Date | null;
   personInCharge: string | null;
   remarks: string | null;
@@ -172,6 +194,7 @@ export const ORDER_FORM_FIELDS = [
   'finishing',
   'finishingOther',
   'requestedDeliveryDate',
+  'printingCompleted',
   'actualDeliveryDate',
   'personInCharge',
   'remarks',
@@ -216,6 +239,7 @@ export function parseOrderForm(
       thicknessMm,
       finishingType: v.finishing === '' ? null : v.finishing === ORDER_OTHERS ? v.finishingOther : v.finishing,
       requestedDeliveryDate: day(v.requestedDeliveryDate),
+      printingCompleted: v.printingCompleted === '' ? null : v.printingCompleted === 'YES',
       actualDeliveryDate: day(v.actualDeliveryDate),
       personInCharge: orNull(v.personInCharge),
       remarks: orNull(v.remarks),
@@ -240,6 +264,7 @@ export const ORDER_EXPORT_COLUMNS = [
   'Thickness of Slabs',
   'Finishing Type',
   'Requested Delivery Date',
+  'Printing Status',
   'Actual Delivery Date',
   'Person In-Charge Name',
   'Remarks',
@@ -256,6 +281,7 @@ export interface OrderExportRow {
   thicknessMm: number | null;
   finishingType: string | null;
   requestedDeliveryDate: Date | null;
+  printingCompleted: boolean | null;
   actualDeliveryDate: Date | null;
   personInCharge: string | null;
   remarks: string | null;
@@ -283,6 +309,7 @@ export function orderExportMatrix(
     row.thicknessMm === null ? '' : format.thickness(row.thicknessMm),
     row.finishingType ?? '',
     row.requestedDeliveryDate ? format.day(row.requestedDeliveryDate) : '',
+    printingStatusLabel(row.printingCompleted) ?? '',
     row.actualDeliveryDate ? format.day(row.actualDeliveryDate) : '--',
     row.personInCharge ?? '',
     row.remarks ?? '',

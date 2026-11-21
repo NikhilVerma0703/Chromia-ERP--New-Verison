@@ -26,6 +26,7 @@ const GROUP: Record<(typeof ORDER_EXPORT_COLUMNS)[number], ExportColumn['group']
   'Thickness of Slabs': 'product',
   'Finishing Type': 'product',
   'Requested Delivery Date': 'timing',
+  'Printing Status': 'state',
   'Actual Delivery Date': 'timing',
   'Person In-Charge Name': 'state',
   Remarks: 'state',

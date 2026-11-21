@@ -1,5 +1,5 @@
 import { API_ROUTES } from '@/lib/chromia/constants/app';
-import { dayInput, finishingChoiceOf, ORDER_OTHERS, thicknessChoiceOf } from '@/lib/chromia/orders';
+import { dayInput, finishingChoiceOf, ORDER_OTHERS, printingChoiceOf, thicknessChoiceOf } from '@/lib/chromia/orders';
 import type { OrderRow } from '@/lib/chromia/server/repositories/order-repository';
 
 import type { OrderFormValues } from './order-form';
@@ -24,6 +24,7 @@ export function orderFormValues(order: OrderRow): OrderFormValues {
     finishing,
     finishingOther: finishing === ORDER_OTHERS ? (order.finishingType ?? '') : '',
     requestedDeliveryDate: dayInput(order.requestedDeliveryDate),
+    printingCompleted: printingChoiceOf(order.printingCompleted),
     actualDeliveryDate: dayInput(order.actualDeliveryDate),
     personInCharge: order.personInCharge ?? '',
     remarks: order.remarks ?? '',

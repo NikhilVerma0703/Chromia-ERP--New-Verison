@@ -22,6 +22,7 @@ import { deleteSlabRecordAction } from '@/lib/chromia/server/actions/slab-record
 import { sendFromStockAction } from '@/lib/chromia/server/actions/stockyard';
 import { alterFromDispatchedAction } from '@/lib/chromia/server/actions/dispatched-alter';
 import { addTrimmingWithoutPrintingAction, deleteTrimmingAction, updateTrimmingSlabAction } from '@/lib/chromia/server/actions/trimming';
+import { listRecentOrders } from '@/lib/chromia/server/repositories/order-repository';
 import { loadTrimmingBoard, loadTrimmingRecord } from '@/lib/chromia/server/repositories/trimming-repository';
 import { parseTrimFilters, type TrimBoardKpis } from '@/lib/chromia/trimming-board';
 import { listSentFromStock } from '@/lib/chromia/server/repositories/stockyard-repository';
@@ -611,6 +612,17 @@ async function main() {
     const after = await orderNamed(designA);
     expect('customer and initiator kept; both delivery dates saved', [after?.customerName, after?.requestedBy, Boolean(after?.requestedDeliveryDate), Boolean(after?.actualDeliveryDate)],
       [`WF${RUN} Customer`, 'Sales desk', true, true]);
+  });
+  await step('Orders (Chromia Operator): Printing Completed? No on a new order, then Yes through Edit (21 Nov 2026)', async () => {
+    const designP = `WF${RUN} Design P`;
+    const created = await saveOrderAction({}, form({ designName: designP, quantity: '3', printingCompleted: 'NO' }));
+    expect('saved with No', [Boolean(created.savedAt), (await orderNamed(designP))?.printingCompleted], [true, false]);
+    const order = await orderNamed(designP);
+    const edited = await saveOrderAction({}, form({ id: order!.id, designName: designP, quantity: '3', printingCompleted: 'YES' }));
+    expect('updated to Yes; still no customer', [Boolean(edited.savedAt), (await orderNamed(designP))?.printingCompleted, (await orderNamed(designP))?.customerName], [true, true, '']);
+    const row = (await listRecentOrders()).find((r) => r.designName === designP);
+    expect('Recent Orders shows it at once', row?.printingCompleted, true);
+    await prisma.chromiaOrder.delete({ where: { id: order!.id } });
   });
   await step('Orders (Chromia Operator): Delete is refused on the server', async () => {
     const order = await orderNamed(designA);

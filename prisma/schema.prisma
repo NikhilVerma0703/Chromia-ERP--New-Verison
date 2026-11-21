@@ -1306,6 +1306,8 @@ model ChromiaOrder {
   /// Polishing, Leather, Honed, or what was typed under Others.
   finishingType         String?   @map("finishing_type")
   requestedDeliveryDate DateTime? @map("requested_delivery_date")
+  /// Printing Completed? (21 Nov 2026): Yes = true, No = false, not chosen = null.
+  printingCompleted     Boolean?  @map("printing_completed")
 
   // Delivery Status
   actualDeliveryDate DateTime? @map("actual_delivery_date")

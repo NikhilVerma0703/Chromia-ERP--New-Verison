@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Field, FormError } from '@/components/chromia/ui';
 import { field, selectField } from '@/components/chromia/ui/form';
 import { APP_ROUTES } from '@/lib/chromia/constants/app';
-import { ORDER_FINISHING_OPTIONS, ORDER_INITIATED_BY_LABEL, ORDER_OTHERS, ORDER_THICKNESS_OPTIONS } from '@/lib/chromia/orders';
+import { ORDER_FINISHING_OPTIONS, ORDER_INITIATED_BY_LABEL, ORDER_OTHERS, ORDER_THICKNESS_OPTIONS, PRINTING_COMPLETED_OPTIONS } from '@/lib/chromia/orders';
 import { saveOrderAction, type OrderFormState } from '@/lib/chromia/server/actions/orders';
 
 import { PhotoEditor, type PhotoEditorHandle } from './photo-editor';
@@ -25,6 +25,8 @@ export interface OrderFormValues {
   finishing: string;
   finishingOther: string;
   requestedDeliveryDate: string;
+  /** 'YES', 'NO' or '' — Printing Completed? (21 Nov 2026). */
+  printingCompleted: string;
   actualDeliveryDate: string;
   personInCharge: string;
   remarks: string;
@@ -46,6 +48,7 @@ const EMPTY: OrderFormValues = {
   finishing: '',
   finishingOther: '',
   requestedDeliveryDate: '',
+  printingCompleted: '',
   actualDeliveryDate: '',
   personInCharge: '',
   remarks: '',
@@ -58,7 +61,8 @@ const primary =
 
 /**
  * Order Entry (Orders, 17 Nov 2026) — a new order, or one opened from its
- * Customer Name to change. Nine Order Details, then DELIVERY STATUS: Actual
+ * Customer Name to change. Ten Order Details (Printing Completed? last,
+ * 21 Nov 2026), then DELIVERY STATUS: Actual
  * Delivery Date, Person In-Charge, Reference Photo and Remarks. Only the
  * customer's name is required. Status follows the Actual Delivery Date:
  * Pending without one, Order Completed with one.
@@ -201,6 +205,17 @@ export function OrderForm({
           </Field>
           <Field label="Requested Delivery Date" htmlFor="requestedDeliveryDate" error={errors?.requestedDeliveryDate?.[0]}>
             <input id="requestedDeliveryDate" name="requestedDeliveryDate" type="date" defaultValue={initial.requestedDeliveryDate} className={field} />
+          </Field>
+          {/* Every role's, the Chromia Operator's included (21 Nov 2026). */}
+          <Field label="Printing Completed?" htmlFor="printingCompleted" error={errors?.printingCompleted?.[0]}>
+            <select id="printingCompleted" name="printingCompleted" defaultValue={initial.printingCompleted} className={selectField}>
+              <option value="">Select</option>
+              {PRINTING_COMPLETED_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </Field>
         </div>
 

@@ -15,6 +15,8 @@ import {
   parseCustomerSearch,
   parseOrderForm,
   parseOrderView,
+  printingChoiceOf,
+  printingStatusLabel,
   quantityTotal,
   thicknessChoiceOf,
 } from '@/lib/chromia/orders';
@@ -77,6 +79,7 @@ describe('Orders — the form saves what is entered, and only the customer is re
       thicknessMm: null,
       finishingType: null,
       requestedDeliveryDate: null,
+      printingCompleted: null,
       actualDeliveryDate: null,
       personInCharge: null,
       remarks: null,
@@ -159,6 +162,7 @@ describe('Orders — the page', () => {
       'Thickness of Slabs',
       'Finishing Type',
       'Requested Delivery Date',
+      'Printing Status',
       'Actual Delivery Date',
       'Person In-Charge Name',
       'Remarks',
@@ -168,7 +172,7 @@ describe('Orders — the page', () => {
     expect(table).toMatch(/row\.actualDeliveryDate \? dateFmt\.format\(row\.actualDeliveryDate\) : '--'/);
   });
 
-  it('the form: nine Order Details, the DELIVERY STATUS heading, then its four', () => {
+  it('the form: ten Order Details (Printing Completed? after Requested Delivery Date), the DELIVERY STATUS heading, then its four', () => {
     const labels = [...form.matchAll(/<Field\s+label=(?:"([^"]+)"|\{([A-Z_]+)\})/g)].map((m) => m[1] ?? m[2]);
     expect(labels).toEqual([
       'Customer Name *',
@@ -180,12 +184,13 @@ describe('Orders — the page', () => {
       'Thickness of Slabs',
       'Finishing Type',
       'Requested Delivery Date',
+      'Printing Completed?',
       'Actual Delivery Date',
       'Person In-Charge Name',
       'Remarks',
       'Reference Photo',
     ]);
-    expect(form.indexOf('>DELIVERY STATUS<')).toBeGreaterThan(form.indexOf('label="Requested Delivery Date"'));
+    expect(form.indexOf('>DELIVERY STATUS<')).toBeGreaterThan(form.indexOf('label="Printing Completed?"'));
     expect(form.indexOf('>DELIVERY STATUS<')).toBeLessThan(form.indexOf('label="Actual Delivery Date"'));
   });
 
@@ -284,7 +289,7 @@ describe('Orders — who sees and does what (19 Nov 2026)', () => {
     const day = new Date('2026-11-19T00:00:00Z');
     const order = (customerName: string, quantity: number | null) => ({
       customerName, requestedBy: null, designName: 'Tajvein', baseMaterialName: null, printingFileName: null, quantity,
-      thicknessMm: 20, finishingType: null, requestedDeliveryDate: day, actualDeliveryDate: null, personInCharge: null, remarks: null,
+      thicknessMm: 20, finishingType: null, requestedDeliveryDate: day, printingCompleted: false, actualDeliveryDate: null, personInCharge: null, remarks: null,
       status: 'PENDING' as const,
     });
     const { body, total } = orderExportMatrix([order('Customer 1', 5), order('Customer 2', 11), order('', 9)], { thickness: (mm) => `${mm} mm`, day: () => '19 Nov 2026' });
@@ -304,5 +309,39 @@ describe('Orders — who sees and does what (19 Nov 2026)', () => {
     expect(repo).toMatch(/listPendingOrders[\s\S]{0,200}where: \{ actualDeliveryDate: null \}/);
     expect(parseOrderView('completed')).toBe('completed');
     expect(parseOrderView('everything')).toBeNull();
+  });
+});
+
+describe('Orders — Printing Completed? and Printing Status (21 Nov 2026)', () => {
+  it('Yes and No are stored as true and false; not chosen stays empty', () => {
+    const yes = parseOrderForm({ customerName: 'Acme', printingCompleted: 'YES' });
+    const no = parseOrderForm({ customerName: 'Acme', printingCompleted: 'NO' });
+    const none = parseOrderForm({ customerName: 'Acme' });
+    expect([yes, no, none].map((r) => (r.ok ? r.values.printingCompleted : 'refused'))).toEqual([true, false, null]);
+    const bad = parseOrderForm({ customerName: 'Acme', printingCompleted: 'MAYBE' });
+    expect(bad.ok).toBe(false);
+  });
+
+  it('the Chromia Operator\'s form has it too: only Customer Name and Order Initiated By are left out', () => {
+    const r = parseOrderForm({ designName: 'Tajvein', printingCompleted: 'NO' }, { withCustomer: false });
+    expect(r.ok && r.values.printingCompleted).toBe(false);
+    const form = read('src/app/chromia/orders/order-form.tsx');
+    const limitedBlock = form.slice(form.indexOf('{limited ? null : ('), form.indexOf('label="Design Name"'));
+    expect(limitedBlock).not.toContain('printingCompleted');
+  });
+
+  it('reads back into the form, and labels the column', () => {
+    expect([true, false, null].map(printingChoiceOf)).toEqual(['YES', 'NO', '']);
+    expect([true, false, null].map(printingStatusLabel)).toEqual(['Printing Completed', 'Printing NOT Completed', null]);
+  });
+
+  it('only the word NOT is red', () => {
+    const table = read('src/app/chromia/orders/orders-table.tsx');
+    expect(table).toContain('Printing <span className="font-semibold text-red-600">NOT</span> Completed');
+    expect(table).toContain('<span className="text-foreground">Printing Completed</span>');
+  });
+
+  it('the Excel keeps the table\'s order: Printing Status after Requested Delivery Date', () => {
+    expect(ORDER_EXPORT_COLUMNS.indexOf('Printing Status')).toBe(ORDER_EXPORT_COLUMNS.indexOf('Requested Delivery Date') + 1);
   });
 });

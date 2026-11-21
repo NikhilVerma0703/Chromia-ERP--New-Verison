@@ -16,6 +16,7 @@ export interface OrderRow {
   thicknessMm: number | null;
   finishingType: string | null;
   requestedDeliveryDate: Date | null;
+  printingCompleted: boolean | null;
   actualDeliveryDate: Date | null;
   personInCharge: string | null;
   remarks: string | null;
@@ -39,6 +40,7 @@ function toRow(o: Stored): OrderRow {
     thicknessMm: o.thicknessMm === null ? null : Number(o.thicknessMm),
     finishingType: o.finishingType,
     requestedDeliveryDate: o.requestedDeliveryDate,
+    printingCompleted: o.printingCompleted,
     actualDeliveryDate: o.actualDeliveryDate,
     personInCharge: o.personInCharge,
     remarks: o.remarks,

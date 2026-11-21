@@ -8,6 +8,8 @@ import {
   NO_CUSTOMER_LABEL,
   ORDER_INITIATED_BY_LABEL,
   ORDER_STATUS_LABELS,
+  printingChoiceOf,
+  printingStatusLabel,
   quantityTotal,
   type OrderStatus,
 } from '@/lib/chromia/orders';
@@ -35,6 +37,20 @@ export function OrderStatusBadge({ status }: { status: OrderStatus }) {
     >
       <span className={`inline-block size-1.5 rounded-full ${done ? 'bg-status-done' : 'bg-status-waste'}`} />
       {ORDER_STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+/**
+ * Printing Status (21 Nov 2026): "Printing Completed" in plain text, or
+ * "Printing NOT Completed" with only NOT in red; "—" when nobody chose yet.
+ */
+export function PrintingStatus({ printingCompleted }: { printingCompleted: boolean | null }) {
+  if (printingStatusLabel(printingCompleted) === null) return <span className="text-muted">—</span>;
+  if (printingCompleted) return <span className="text-foreground">Printing Completed</span>;
+  return (
+    <span className="text-foreground">
+      Printing <span className="font-semibold text-red-600">NOT</span> Completed
     </span>
   );
 }
@@ -85,6 +101,7 @@ export function OrdersTable({
             <th className={th}>Thickness of Slabs</th>
             <th className={th}>Finishing Type</th>
             <th className={th}>Requested Delivery Date</th>
+            <th className={th}>Printing Status</th>
             <th className={th}>Actual Delivery Date</th>
             <th className={th}>Person In-Charge Name</th>
             <th className={th}>Remarks</th>
@@ -124,6 +141,9 @@ export function OrdersTable({
               <td className={`${td} whitespace-nowrap tabular-nums`}>{row.thicknessMm === null ? dash : formatThickness(row.thicknessMm)}</td>
               <td className={td}>{row.finishingType ?? dash}</td>
               <td className={`${td} whitespace-nowrap`}>{row.requestedDeliveryDate ? dateFmt.format(row.requestedDeliveryDate) : dash}</td>
+              <td className={`${td} whitespace-nowrap`} data-printing-status={printingChoiceOf(row.printingCompleted)}>
+                <PrintingStatus printingCompleted={row.printingCompleted} />
+              </td>
               <td className={`${td} whitespace-nowrap`}>{row.actualDeliveryDate ? dateFmt.format(row.actualDeliveryDate) : '--'}</td>
               <td className={tdMuted}>{row.personInCharge ?? dash}</td>
               <td className={`${tdMuted} max-w-[280px] whitespace-pre-line`}>{row.remarks ?? dash}</td>
@@ -154,7 +174,7 @@ export function OrdersTable({
                 <td key={k} className={td} />
               ))}
               <td className={`${tdNum} font-semibold`}>{quantityTotal(rows)}</td>
-              <td className={td} colSpan={8} />
+              <td className={td} colSpan={9} />
             </tr>
           </tfoot>
         ) : null}

@@ -10,6 +10,7 @@ one commit per change.
 |---|--------|-------|
 | 1 | Trimming Dashboard: 8 KPI cards (Overall Status, Current Status) with drill-down | Done |
 | 2 | Trimming → Find a Slab: five filters over Trimming Records | Done |
+| 3 | Orders: Printing Completed? (Yes / No) and the Printing Status column, for every role | Done |
 
 Each change has the same headings as the earlier rounds' notes.
 
@@ -86,3 +87,37 @@ None.
 - **In the browser:** Batch "DB-2" + Material "carr" → the two matching rows, KPIs unchanged; Production Date alone → that day's rows; Clear Filters → all rows, fields empty. No console errors.
 - **Workflow:** Find a Slab by slab, batch and material finds the slab once; with Total Trimmed chosen, both its attempts; an unknown slab number finds nothing.
 - **Unit tests:** the five fields alone and together, the section order, and one table only.
+
+---
+
+### Change #3: Order Printing Status
+
+#### Requirement (as given)
+
+> Order Entry Form: add a dropdown field named Printing Completed? immediately after Requested Delivery Date, with options Yes and No; save and persist it. Recent Orders: add a column named Printing Status immediately after Requested Delivery Date — "Printing Completed" for Yes (normal black text), "Printing NOT Completed" for No, with only the word NOT in red. Chromia Operators must be able to see and set the field, see the column, and change it through the existing Edit, in both Create and Edit. Preserve every existing role restriction (no Customer Name or Order Initiated By for operators, no Delete). Update Recent Orders immediately after saving.
+
+#### Decisions taken (for the owner to confirm or change)
+
+- **Stored as Yes = true, No = false, and empty where nobody has chosen.** The dropdown starts on "Select", as Thickness and Finishing Type do. Every order entered before this change shows "—" in Printing Status until someone chooses. Saving the form saves whatever the dropdown shows, so choosing "Select" again clears it.
+- **Not required** — like every order field except the customer's name.
+- **Every role's**, the Chromia Operator's included. The operator's form still has no Customer Name or Order Initiated By, and the server still keeps the order's own values for both; Delete is still refused to the operator.
+- **The column is in every Orders table** (Recent Orders, a customer search, the Pending and Completed lists) and **in the Pending / Completed Excel**, right after Requested Delivery Date — the Excel's columns are the table's, in its order.
+
+#### Implemented
+
+- `prisma/schema.prisma`, `prisma/migrations/0012_order_printing_completed/migration.sql` — `chromia_order.printing_completed` (nullable boolean).
+- `src/lib/chromia/orders.ts` — the field in the form schema and stored values; `PRINTING_COMPLETED_OPTIONS`, `printingChoiceOf`, `printingStatusLabel`; the Excel column.
+- `src/app/chromia/orders/order-form.tsx`, `form-values.ts` — the dropdown after Requested Delivery Date, filled from the order on Edit.
+- `src/app/chromia/orders/orders-table.tsx` — the Printing Status column (only NOT in red).
+- `src/lib/chromia/server/repositories/order-repository.ts`, `src/app/api/chromia/orders-export/route.ts`.
+
+#### Database
+
+Migration `0012_order_printing_completed` — one nullable column, no row changed. Applied to the local `chromia_erp` (backed up first to `db-backups/chromia_erp-before-0012-2026-11-21.dump`) and to the test database.
+
+#### Verified
+
+- **In the browser, as admin** (test database, demo order removed afterwards): the form shows Printing Completed? after Requested Delivery Date with Select / Yes / No; saved with No, the order was at once at the top of Recent Orders reading "Printing NOT Completed", only NOT in red, and the form emptied.
+- **As the Chromia Operator:** the same field and column; no Customer Name, Order Initiated By or Delete. Edit opened with No chosen; changed to Yes and updated, Recent Orders read "Printing Completed" in plain text, and the order kept its customer name.
+- **Workflow (test database):** an operator's new order saved with No, changed to Yes through Edit, shown so in Recent Orders, customer still empty.
+- **Tests:** typecheck clean; Vitest 615; node tests 81; workflows 96 steps; audit 82 checks; production build.
